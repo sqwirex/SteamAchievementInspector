@@ -34,7 +34,7 @@ To fetch any user data, we need to query Valve’s databases. That’s exactly w
 
 ## Why this is not proof of cheating
 
-- **Identical timestamps** can happen due to save-file restores, achievements added later by devs, meta-achievements (“get all achievements”), or offline play syncing later.
+- **Identical timestamps** can happen due to save-file restores, achievements added later by devs, meta-achievements (“get all achievements”), offline play syncing later, or some types of bug in the game.
 - **Short gaps** may happen with related/progressive achievements or lucky streaks.  
   Focus on *hard* achievements across *different* games appearing in a short window.
 
@@ -106,7 +106,7 @@ If this tool helped, great! You can also audit your own profile — and if you e
 
 ## Почему это НЕ доказательство накрутки, а лишь сигнал к проверке
 
-- **Одинаковый таймстамп**: перенос старых сейвов, добавление достижений пост-фактум разработчиком, связанные достижения (например «получи все достижения»), оффлайн-игра с последующей синхронизацией.
+- **Одинаковый таймстамп**: перенос старых сейвов, добавление достижений пост-фактум разработчиком, связанные достижения (например «получи все достижения»), оффлайн-игра с последующей синхронизацией, различные баги в игре.
 - **Малый интервал**: связанные/накопительные достижения, удачные стрики в одной сессии.  
   Смотрите прежде всего на *сложные* достижения из разных игр, появившиеся в узком интервале.
 
