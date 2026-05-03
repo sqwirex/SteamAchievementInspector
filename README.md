@@ -10,8 +10,9 @@ It fetches a profile’s games and achievements, sorts them by time, and lets yo
 - Enter **Steam profile URL** (`profiles/<steamid64>`, `id/<vanity>`, or raw steamid64).
 - Enter your **Steam Web API Key** ([how to get it](#how-to-get-a-steam-web-api-key)).
 - Click **Load**. If nothing appears or only partial data loads, see [Why it might show nothing](#why-it-might-show-nothing).
+- The API key, profile fields, and selected language are now saved between app launches unless you clear them manually.
 
-Then sort by time, filter identical timestamps or short time gaps, tune the **suspicious** threshold (Δt, minutes), and export to CSV with metadata.
+Then you can sort achievements by unlock time, filter achievements with identical timestamps or very small time gaps, set your own **suspicion** threshold for the time between achievements (Δt) by changing the value of N (1 < N ≤ 1440), and export the resulting data to a CSV file with all metadata.
 
 ### How to get a Steam Web API Key
 
@@ -83,8 +84,9 @@ If this tool helped, great! You can also audit your own profile — and if you e
 - Введите **URL профиля Steam** (поддерживаются `profiles/<steamid64>`, `id/<vanity>` и чистый steamid64).
 - Введите **Steam Web API Key** ([как получить](#как-получить-steam-web-api-key)).
 - Нажмите **Загрузить** и ожидайте подгрузки всех игр и достижений (если не грузит или грузит частично — см. раздел [почему может ничего не показывать](#почему-может-ничего-не-показывать)).
+- Поля API-ключа, профиля и выбранный язык теперь сохраняются между запусками приложения, если их не очищать вручную.
 
-Далее вы можете сортировать достижения по времени получения, фильтровать по достижениям с одинаковым таймстампом или с маленькой разницей во времени, ставить собственные **подозрения** по времени между достижениями (Δt), меняя значение N, а также экспортировать полученные данные в CSV со всеми метаданными.
+Далее вы можете сортировать достижения по времени получения, фильтровать по достижениям с одинаковым таймстампом или с маленькой разницей во времени, ставить собственные **подозрения** по времени между достижениями (Δt), меняя значение N (1 < N ≤ 1440), а также экспортировать полученные данные в CSV со всеми метаданными.
 
 ### Как получить Steam Web API Key
 
