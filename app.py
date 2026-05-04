@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-from __future__ import annotations
-
 import sys
 import re
 import time
@@ -78,10 +73,12 @@ class I18n:
                 "game": "Game",
                 "sort_desc": "By time: desc",
                 "sort_asc": "By time: asc",
+                "sort_label": "Sort",
                 "n_label": "N (Δt) =",
+                "filters_label": "Filters",
                 "only_susp": "Suspicious (≤ N min)",
                 "only_exact": "Identical timestamps",
-                "reset": "Reset filters",
+                "reset": "Reset filters and sorting",
                 "file_menu": "File",
                 "export_csv": "Export CSV…",
                 "ready": "Ready.",
@@ -127,10 +124,12 @@ class I18n:
                 "game": "Игра",
                 "sort_desc": "По времени: убыв.",
                 "sort_asc": "По времени: возр.",
+                "sort_label": "Сортировка",
                 "n_label": "N (Δt) =",
+                "filters_label": "Фильтры",
                 "only_susp": "Подозрительные (≤ N мин)",
                 "only_exact": "Одинаковые таймстампы",
-                "reset": "Сброс фильтров",
+                "reset": "Сброс фильтров и сортировки",
                 "file_menu": "Файл",
                 "export_csv": "Экспорт CSV…",
                 "ready": "Готово.",
@@ -301,7 +300,7 @@ class SteamAPI:
 
 
 class NoHighlightDelegate(QtWidgets.QStyledItemDelegate):
-    def paint(self, painter: QtGui.QPainter, option: QtGui.QStyleOptionViewItem, index: QtCore.QModelIndex):
+    def paint(self, painter: QtGui.QPainter, option: QtWidgets.QStyleOptionViewItem, index: QtCore.QModelIndex):
         opt = QtWidgets.QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         State = getattr(QtWidgets.QStyle, "StateFlag", QtWidgets.QStyle)
@@ -435,6 +434,209 @@ class CellPreviewPopup(QtWidgets.QWidget):
         self.move(int(pos_x), int(pos_y))
         self.show()
         self.raise_()
+
+
+class CapsuleScrollBar(QtWidgets.QScrollBar):
+    def __init__(self, orientation: QtCore.Qt.Orientation, parent: Optional[QtWidgets.QWidget] = None):
+        super().__init__(orientation, parent)
+        self._hover_handle = False
+        self._reserved_start = 0
+        self._dragging = False
+        self._drag_offset = 0.0
+        self.setMouseTracking(True)
+
+        if orientation == QtCore.Qt.Orientation.Vertical:
+            self.setFixedWidth(16)
+        else:
+            self.setFixedHeight(16)
+
+        self.setStyleSheet("""
+            QScrollBar {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar::add-line,
+            QScrollBar::sub-line,
+            QScrollBar::add-page,
+            QScrollBar::sub-page {
+                width: 0px;
+                height: 0px;
+                background: transparent;
+                border: none;
+            }
+        """)
+
+    def set_reserved_start(self, value: int) -> None:
+        value = max(0, int(value))
+        if self._reserved_start != value:
+            self._reserved_start = value
+            self.update()
+
+    def _is_vertical(self) -> bool:
+        return self.orientation() == QtCore.Qt.Orientation.Vertical
+
+    def _track_rect(self) -> QtCore.QRectF:
+        rect = QtCore.QRectF(self.rect())
+
+        if self._is_vertical():
+            return rect.adjusted(4.6, self._reserved_start + 2, -3.4, -2)
+
+        return rect.adjusted(2, 4.6, -2, -3.4)
+
+    def _slider_rect(self) -> QtCore.QRectF:
+        track = self._track_rect()
+        vertical = self._is_vertical()
+
+        track_len = max(1.0, track.height() if vertical else track.width())
+        min_v = self.minimum()
+        max_v = self.maximum()
+        page = max(1, self.pageStep())
+        span = max_v - min_v
+
+        if span <= 0:
+            ratio = 1.0
+            pos_ratio = 0.0
+        else:
+            ratio = page / float(span + page)
+            pos_ratio = (self.value() - min_v) / float(span)
+
+        min_len = 40.0
+        slider_len = max(min_len, track_len * ratio)
+        slider_len = min(slider_len, track_len)
+        slider_pos = (track_len - slider_len) * max(0.0, min(1.0, pos_ratio))
+
+        if vertical:
+            return QtCore.QRectF(track.x(), track.y() + slider_pos, track.width(), slider_len)
+        return QtCore.QRectF(track.x() + slider_pos, track.y(), slider_len, track.height())
+
+    def _event_axis_pos(self, event: QtGui.QMouseEvent) -> float:
+        pos = event.position()
+        return pos.y() if self._is_vertical() else pos.x()
+
+    def _slider_axis_start(self) -> float:
+        slider = self._slider_rect()
+        return slider.y() if self._is_vertical() else slider.x()
+
+    def _track_axis_start(self) -> float:
+        track = self._track_rect()
+        return track.y() if self._is_vertical() else track.x()
+
+    def _track_axis_length(self) -> float:
+        track = self._track_rect()
+        return track.height() if self._is_vertical() else track.width()
+
+    def _slider_axis_length(self) -> float:
+        slider = self._slider_rect()
+        return slider.height() if self._is_vertical() else slider.width()
+
+    def _set_value_from_slider_axis_start(self, slider_start: float) -> None:
+        min_v = self.minimum()
+        max_v = self.maximum()
+        span = max_v - min_v
+        if span <= 0:
+            return
+
+        track_start = self._track_axis_start()
+        movable_len = max(1.0, self._track_axis_length() - self._slider_axis_length())
+        pos_ratio = (slider_start - track_start) / movable_len
+        pos_ratio = max(0.0, min(1.0, pos_ratio))
+
+        self.setValue(round(min_v + pos_ratio * span))
+
+    def paintEvent(self, event: QtGui.QPaintEvent):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+
+        outline_pen = QtGui.QPen(QtGui.QColor("#2b3849"), 2)
+        outline_pen.setCosmetic(True)
+        painter.setPen(outline_pen)
+        if self._is_vertical():
+            painter.drawLine(0, 0, 0, self.height())
+        else:
+            painter.drawLine(0, 0, self.width(), 0)
+
+        track = self._track_rect()
+        if track.width() <= 0 or track.height() <= 0:
+            return
+
+        track_radius = min(track.width(), track.height()) / 2.0
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.setBrush(QtGui.QColor("#101722"))
+        painter.drawRoundedRect(track, track_radius, track_radius)
+
+        if self.maximum() <= self.minimum():
+            return
+
+        handle = self._slider_rect()
+        if handle.width() <= 0 or handle.height() <= 0:
+            return
+
+        handle_radius = min(handle.width(), handle.height()) / 2.0
+        painter.setBrush(QtGui.QColor("#5f82aa") if (self._hover_handle or self._dragging) else QtGui.QColor("#4e7097"))
+        painter.drawRoundedRect(handle, handle_radius, handle_radius)
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent):
+        if event.button() != QtCore.Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+
+        slider = self._slider_rect()
+        axis_pos = self._event_axis_pos(event)
+
+        if slider.contains(event.position()):
+            self._dragging = True
+            self._drag_offset = axis_pos - self._slider_axis_start()
+            self.setSliderDown(True)
+            self.grabMouse()
+            event.accept()
+            self.update()
+            return
+
+        if self._track_rect().contains(event.position()):
+            self._dragging = True
+            self._drag_offset = self._slider_axis_length() / 2.0
+            self.setSliderDown(True)
+            self.grabMouse()
+            self._set_value_from_slider_axis_start(axis_pos - self._drag_offset)
+            event.accept()
+            self.update()
+            return
+
+        event.accept()
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent):
+        if self._dragging:
+            slider_start = self._event_axis_pos(event) - self._drag_offset
+            self._set_value_from_slider_axis_start(slider_start)
+            event.accept()
+            self.update()
+            return
+
+        was_hover = self._hover_handle
+        self._hover_handle = self._slider_rect().contains(event.position())
+        if was_hover != self._hover_handle:
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent):
+        if self._dragging and event.button() == QtCore.Qt.MouseButton.LeftButton:
+            self._dragging = False
+            self.setSliderDown(False)
+            try:
+                self.releaseMouse()
+            except RuntimeError:
+                pass
+            event.accept()
+            self.update()
+            return
+
+        super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event: QtCore.QEvent):
+        if not self._dragging and self._hover_handle:
+            self._hover_handle = False
+            self.update()
+        super().leaveEvent(event)
 
 
 class QuietTable(QtWidgets.QTableWidget):
@@ -1088,6 +1290,255 @@ class RoundedProgressBar(QtWidgets.QProgressBar):
                 painter.drawRoundedRect(fill_rect, fill_width / 2.0, fill_width / 2.0)
 
 
+class ThemedMessageDialog(QtWidgets.QWidget):
+    def __init__(self, parent: Optional[QtWidgets.QWidget], title: str, message: str, kind: str = "info"):
+        super().__init__(parent)
+        self._result = 0
+        self._loop: Optional[QtCore.QEventLoop] = None
+        self._title = title
+        self._message = message
+        self._kind = kind
+
+        self.setObjectName("ThemedMessageOverlay")
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+
+        if parent is not None:
+            parent.installEventFilter(self)
+            self.setGeometry(parent.rect())
+        else:
+            self.resize(480, 260)
+
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scrim = QtWidgets.QFrame()
+        scrim.setObjectName("DialogScrim")
+        outer.addWidget(scrim)
+
+        scrim_layout = QtWidgets.QVBoxLayout(scrim)
+        scrim_layout.setContentsMargins(18, 18, 18, 18)
+        scrim_layout.setSpacing(0)
+        scrim_layout.addStretch(1)
+
+        center_row = QtWidgets.QHBoxLayout()
+        center_row.addStretch(1)
+
+        self.card = QtWidgets.QFrame()
+        self.card.setObjectName("DialogFrame")
+        self.card.setMinimumWidth(420)
+        self.card.setMaximumWidth(460)
+        center_row.addWidget(self.card)
+
+        center_row.addStretch(1)
+        scrim_layout.addLayout(center_row)
+        scrim_layout.addStretch(1)
+
+        layout = QtWidgets.QVBoxLayout(self.card)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        title_bar = QtWidgets.QFrame()
+        title_bar.setObjectName("DialogTitleBar")
+        title_bar.setFixedHeight(58)
+        title_row = QtWidgets.QHBoxLayout(title_bar)
+        title_row.setContentsMargins(18, 0, 12, 0)
+        title_row.setSpacing(10)
+
+        self.title_label = QtWidgets.QLabel(title)
+        self.title_label.setObjectName("DialogTitleLabel")
+        title_row.addWidget(self.title_label, 1)
+
+        close_btn = QtWidgets.QPushButton("×")
+        close_btn.setObjectName("DialogCloseButton")
+        close_btn.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        close_btn.setFixedSize(30, 30)
+        close_btn.clicked.connect(self.reject)
+        title_row.addWidget(close_btn, 0, QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(title_bar)
+
+        body = QtWidgets.QFrame()
+        body.setObjectName("DialogBody")
+        body_layout = QtWidgets.QVBoxLayout(body)
+        body_layout.setContentsMargins(22, 22, 22, 20)
+        body_layout.setSpacing(18)
+
+        content_row = QtWidgets.QHBoxLayout()
+        content_row.setSpacing(16)
+
+        icon_holder = QtWidgets.QLabel()
+        icon_holder.setObjectName("DialogIconHolder")
+        icon_holder.setFixedSize(60, 60)
+        icon_holder.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        sp_map = {
+            "info": QtWidgets.QStyle.StandardPixmap.SP_MessageBoxInformation,
+            "warning": QtWidgets.QStyle.StandardPixmap.SP_MessageBoxWarning,
+            "error": QtWidgets.QStyle.StandardPixmap.SP_MessageBoxCritical,
+        }
+        bg_map = {
+            "info": "#183854",
+            "warning": "#4c3a12",
+            "error": "#4b1e29",
+        }
+        pix = self.style().standardIcon(sp_map.get(kind, sp_map["info"])).pixmap(32, 32)
+        icon_holder.setPixmap(pix)
+        icon_holder.setStyleSheet(
+            f"background: {bg_map.get(kind, '#183854')}; border: 1px solid #2b3849; border-radius: 30px;"
+        )
+        content_row.addWidget(icon_holder, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+
+        self.message_label = QtWidgets.QLabel(message)
+        self.message_label.setObjectName("DialogMessageLabel")
+        self.message_label.setWordWrap(True)
+        self.message_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.message_label.setMinimumWidth(240)
+        content_row.addWidget(self.message_label, 1)
+        body_layout.addLayout(content_row)
+
+        buttons_row = QtWidgets.QHBoxLayout()
+        buttons_row.addStretch(1)
+        ok_btn = QtWidgets.QPushButton("OK")
+        ok_btn.setObjectName("DialogOkButton")
+        ok_btn.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        ok_btn.setFixedHeight(42)
+        ok_btn.setMinimumWidth(104)
+        ok_btn.clicked.connect(self.accept)
+        buttons_row.addWidget(ok_btn)
+        body_layout.addLayout(buttons_row)
+
+        layout.addWidget(body)
+
+        self.setStyleSheet("""
+            QWidget#ThemedMessageOverlay {
+                background: transparent;
+            }
+            QFrame#DialogScrim {
+                background: rgba(4, 10, 18, 150);
+            }
+            QFrame#DialogFrame {
+                background: #171e29;
+                border: 1px solid #2b3849;
+                border-radius: 16px;
+            }
+            QFrame#DialogTitleBar {
+                background: #1d2836;
+                border-bottom: 1px solid #2b3849;
+                border-top-left-radius: 16px;
+                border-top-right-radius: 16px;
+            }
+            QFrame#DialogBody {
+                background: #171e29;
+                border-bottom-left-radius: 16px;
+                border-bottom-right-radius: 16px;
+            }
+            QLabel#DialogTitleLabel {
+                color: #e8f1fb;
+                font-size: 15px;
+                font-weight: 800;
+                background: transparent;
+            }
+            QLabel#DialogMessageLabel {
+                color: #dbe7f3;
+                font-size: 13px;
+                background: transparent;
+            }
+            QPushButton#DialogCloseButton {
+                background: transparent;
+                color: #aebdcd;
+                border: none;
+                border-radius: 8px;
+                font-size: 18px;
+                font-weight: 700;
+                padding: 0;
+            }
+            QPushButton#DialogCloseButton:hover {
+                background: #212d3d;
+                color: #f2c94c;
+            }
+            QPushButton#DialogCloseButton:pressed {
+                background: #18212d;
+            }
+            QPushButton#DialogOkButton {
+                border: 1px solid #334256;
+                border-radius: 12px;
+                padding: 6px 18px;
+                font-weight: 800;
+                color: #eef6fc;
+                background: #202b3a;
+            }
+            QPushButton#DialogOkButton:hover { background: #263448; }
+            QPushButton#DialogOkButton:pressed { background: #182231; }
+        """)
+
+    def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        parent = self.parentWidget()
+        if obj is parent and event.type() in (
+            QtCore.QEvent.Type.Resize,
+            QtCore.QEvent.Type.Move,
+            QtCore.QEvent.Type.Show,
+        ):
+            self.setGeometry(parent.rect())
+        return super().eventFilter(obj, event)
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent):
+        if self.card.geometry().contains(event.position().toPoint()):
+            super().mousePressEvent(event)
+            return
+        self.reject()
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent):
+        if event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
+            self.accept()
+            return
+        if event.key() == QtCore.Qt.Key.Key_Escape:
+            self.reject()
+            return
+        super().keyPressEvent(event)
+
+    def _finish(self, result: int):
+        self._result = result
+        parent = self.parentWidget()
+        if parent is not None:
+            parent.removeEventFilter(self)
+        self.hide()
+        if self._loop is not None and self._loop.isRunning():
+            self._loop.quit()
+        self.deleteLater()
+
+    def accept(self):
+        self._finish(1)
+
+    def reject(self):
+        self._finish(0)
+
+    def exec(self) -> int:
+        parent = self.parentWidget()
+        if parent is not None:
+            self.setGeometry(parent.rect())
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.setFocus()
+        self._loop = QtCore.QEventLoop(self)
+        self._loop.exec()
+        return self._result
+
+    @classmethod
+    def information(cls, parent: Optional[QtWidgets.QWidget], title: str, message: str):
+        return cls(parent, title, message, "info").exec()
+
+    @classmethod
+    def warning(cls, parent: Optional[QtWidgets.QWidget], title: str, message: str):
+        return cls(parent, title, message, "warning").exec()
+
+    @classmethod
+    def critical(cls, parent: Optional[QtWidgets.QWidget], title: str, message: str):
+        return cls(parent, title, message, "error").exec()
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1095,8 +1546,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.i18n = I18n("en")
 
         self.setWindowTitle(self.i18n.t("app_title"))
-        self.resize(1280, 820)
-        self.setMinimumSize(1280, 680)
+        self.resize(1280, 760)
+        self.setMinimumSize(760, 720)
         app_icon = QtGui.QIcon(resource_path("app.ico"))
         self.setWindowIcon(app_icon)
         QtWidgets.QApplication.instance().setWindowIcon(app_icon)
@@ -1136,7 +1587,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_ui()
         self._load_session()
         self._retranslate_ui()
-        QtCore.QTimer.singleShot(0, self._update_table_scroll_header)
+        QtCore.QTimer.singleShot(0, self._refresh_table_geometry)
+        QtCore.QTimer.singleShot(50, self._refresh_table_geometry)
 
     def _build_ui(self):
         self._apply_modern_style()
@@ -1146,14 +1598,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
 
         page = QtWidgets.QVBoxLayout(central)
-        page.setContentsMargins(18, 16, 18, 16)
-        page.setSpacing(14)
+        page.setContentsMargins(12, 12, 12, 12)
+        page.setSpacing(10)
 
         hero = QtWidgets.QFrame()
         hero.setObjectName("Hero")
         hero_l = QtWidgets.QHBoxLayout(hero)
-        hero_l.setContentsMargins(20, 16, 20, 16)
-        hero_l.setSpacing(14)
+        hero_l.setContentsMargins(16, 12, 16, 12)
+        hero_l.setSpacing(10)
 
         title_box = QtWidgets.QVBoxLayout()
         title_box.setSpacing(3)
@@ -1171,8 +1623,8 @@ class MainWindow(QtWidgets.QMainWindow):
         controls_card = QtWidgets.QFrame()
         controls_card.setObjectName("Card")
         controls = QtWidgets.QVBoxLayout(controls_card)
-        controls.setContentsMargins(16, 16, 16, 16)
-        controls.setSpacing(12)
+        controls.setContentsMargins(12, 12, 12, 12)
+        controls.setSpacing(10)
 
         top = QtWidgets.QGridLayout()
         top.setHorizontalSpacing(12)
@@ -1182,7 +1634,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_profile = QtWidgets.QLabel()
         self.lbl_profile.setObjectName("FieldLabel")
         self.edt_profile = StyledClearLineEdit()
-        self.edt_profile.setMinimumWidth(360)
+        self.edt_profile.setMinimumWidth(0)
+        self.edt_profile.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
 
         self.lbl_api = QtWidgets.QLabel()
         self.lbl_api.setObjectName("FieldLabel")
@@ -1211,16 +1664,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_export.clicked.connect(self.export_csv)
 
         top.addWidget(self.lbl_profile, 0, 0)
-        top.addWidget(self.edt_profile, 0, 1, 1, 3)
-        top.addWidget(self.lbl_api, 0, 4)
-        top.addWidget(self.edt_key, 0, 5, 1, 2)
-        top.addWidget(self.lbl_lang, 0, 7)
-        top.addWidget(self.cmb_lang, 0, 8)
-        top.addWidget(self.btn_fetch, 0, 9)
-        top.addWidget(self.btn_stop, 0, 10)
-        top.addWidget(self.btn_export, 0, 11)
-        top.setColumnStretch(1, 3)
-        top.setColumnStretch(5, 2)
+        top.addWidget(self.edt_profile, 0, 1, 1, 5)
+
+        top.addWidget(self.lbl_api, 1, 0)
+        top.addWidget(self.edt_key, 1, 1, 1, 3)
+        top.addWidget(self.lbl_lang, 1, 4)
+        top.addWidget(self.cmb_lang, 1, 5)
+
+        actions = QtWidgets.QHBoxLayout()
+        actions.setSpacing(8)
+        actions.addWidget(self.btn_fetch)
+        actions.addWidget(self.btn_stop)
+        actions.addWidget(self.btn_export)
+        actions.setStretch(0, 1)
+        actions.setStretch(1, 1)
+        actions.setStretch(2, 1)
+
+        top.setColumnStretch(1, 2)
+        top.setColumnStretch(2, 2)
+        top.setColumnStretch(3, 2)
+        top.setColumnStretch(5, 1)
 
         filters = QtWidgets.QGridLayout()
         filters.setHorizontalSpacing(12)
@@ -1236,13 +1699,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_sort = CustomComboBox()
         self.cmb_sort.currentIndexChanged.connect(self.refresh_table)
 
+        self.lbl_sorting = QtWidgets.QLabel()
+        self.lbl_sorting.setObjectName("FieldLabel")
+
         self.lbl_n = QtWidgets.QLabel()
         self.lbl_n.setObjectName("FieldLabel")
         self.spin_n = SmartSpinBox()
         self.spin_n.setRange(1, 1440)
         self.spin_n.setValue(2)
-        self.spin_n.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self.spin_n.setFixedWidth(78)
+        self.spin_n.setFixedWidth(98)
         self.spin_n.valueChanged.connect(self.refresh_table)
         self.lbl_n_unit = QtWidgets.QLabel()
         self.lbl_n_unit.setObjectName("FieldLabel")
@@ -1253,20 +1718,41 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chk_only_exact = QtWidgets.QCheckBox()
         self.chk_only_exact.stateChanged.connect(self.refresh_table)
 
+        self.lbl_filters = QtWidgets.QLabel()
+        self.lbl_filters.setObjectName("FieldLabel")
+
         self.btn_reset = QtWidgets.QPushButton()
         self.btn_reset.setObjectName("GhostButton")
         self.btn_reset.clicked.connect(self.reset_filters)
 
         filters.addWidget(self.lbl_game, 0, 0)
-        filters.addWidget(self.cmb_game, 0, 1, 1, 3)
-        filters.addWidget(self.cmb_sort, 0, 4)
-        filters.addWidget(self.lbl_n, 0, 5)
-        filters.addWidget(self.spin_n, 0, 6)
-        filters.addWidget(self.lbl_n_unit, 0, 7)
-        filters.addWidget(self.chk_only_susp, 0, 8)
-        filters.addWidget(self.chk_only_exact, 0, 9)
-        filters.addWidget(self.btn_reset, 0, 10)
+        filters.addWidget(self.cmb_game, 0, 1, 1, 5)
+
+        sort_n_row = QtWidgets.QHBoxLayout()
+        sort_n_row.setSpacing(10)
+        sort_n_row.addWidget(self.cmb_sort, 1)
+        sort_n_row.addWidget(self.lbl_n)
+        sort_n_row.addWidget(self.spin_n)
+        sort_n_row.addWidget(self.lbl_n_unit)
+        filters.addWidget(self.lbl_sorting, 1, 0)
+        filters.addLayout(sort_n_row, 1, 1, 1, 5)
+
+        filter_flags = QtWidgets.QHBoxLayout()
+        filter_flags.setSpacing(12)
+        filter_flags.addWidget(self.chk_only_susp)
+        filter_flags.addWidget(self.chk_only_exact)
+        filter_flags.addStretch(1)
+        filter_flags.addWidget(self.btn_reset)
+        filters.addWidget(self.lbl_filters, 2, 0)
+        filters.addLayout(filter_flags, 2, 1, 1, 5)
+
         filters.setColumnStretch(1, 2)
+        filters.setColumnStretch(2, 2)
+        filters.setColumnStretch(3, 2)
+        filters.setColumnStretch(4, 2)
+        filters.setColumnStretch(5, 2)
+
+        controls.addLayout(actions)
 
         page.addWidget(controls_card)
 
@@ -1278,6 +1764,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.table = QuietTable(0, 7)
         self.table.setObjectName("AchievementTable")
+        self.table_v_scroll = CapsuleScrollBar(QtCore.Qt.Orientation.Vertical, self.table)
+        self.table_h_scroll = CapsuleScrollBar(QtCore.Qt.Orientation.Horizontal, self.table)
+        self.table.setVerticalScrollBar(self.table_v_scroll)
+        self.table.setHorizontalScrollBar(self.table_h_scroll)
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
         self.table.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1293,6 +1783,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table.setCornerButtonEnabled(False)
         self.table.setItemDelegate(NoHighlightDelegate(self.table))
         self.table.viewport().installEventFilter(self)
+        self.table.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         hh = self.table.horizontalHeader()
         hh.setDefaultSectionSize(200)
@@ -1304,7 +1796,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table.setColumnWidth(1, 220)
         hh.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Interactive)
         self.table.setColumnWidth(2, 260)
-        hh.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(3, 380)
         hh.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Interactive)
         self.table.setColumnWidth(4, 170)
         hh.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Interactive)
@@ -1313,11 +1806,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table.setColumnWidth(6, 46)
 
         table_l.addWidget(self.table, 1)
+        self._apply_compact_table_columns()
 
-        self.table_scroll_header = QtWidgets.QFrame(table_card)
+        self.table_scroll_header = QtWidgets.QFrame(self.table)
         self.table_scroll_header.setObjectName("TableScrollHeader")
+        self.table_scroll_header.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.table_scroll_header.hide()
-        self.table.verticalScrollBar().rangeChanged.connect(lambda *_: self._update_table_scroll_header())
+        self.table.verticalScrollBar().rangeChanged.connect(lambda *_: (self._apply_compact_table_columns(), self._update_table_scroll_header()))
         self.table.horizontalHeader().geometriesChanged.connect(self._update_table_scroll_header)
         self.table.horizontalScrollBar().rangeChanged.connect(lambda *_: self._update_table_scroll_header())
 
@@ -1332,7 +1827,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress = RoundedProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
-        self.progress.setTextVisible(False)
         self.lbl_status = QtWidgets.QLabel()
         self.lbl_status.setObjectName("StatusLabel")
         bottom.addWidget(self.progress, 1)
@@ -1364,7 +1858,7 @@ class MainWindow(QtWidgets.QMainWindow):
             }
             QLabel#TitleLabel {
                 color: #f6f9fc;
-                font-size: 24px;
+                font-size: 22px;
                 font-weight: 800;
             }
             QLabel#SubtitleLabel, QLabel#StatusLabel {
@@ -1379,8 +1873,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 color: #edf5fb;
                 border: 1px solid #2b3849;
                 border-radius: 12px;
-                padding: 8px 12px;
-                min-height: 22px;
+                padding: 7px 10px;
+                min-height: 20px;
                 selection-background-color: #c99718;
                 selection-color: #0f141d;
             }
@@ -1403,7 +1897,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 image: none;
                 width: 8px;
                 height: 8px;
-                margin-right: 12px;
+                margin-right: 0px;
                 background: #f2c94c;
                 border-radius: 2px;
             }
@@ -1447,7 +1941,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QPushButton {
                 border: 1px solid #334256;
                 border-radius: 12px;
-                padding: 9px 14px;
+                padding: 8px 12px;
                 font-weight: 800;
                 color: #eef6fc;
                 background: #202b3a;
@@ -1521,7 +2015,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 border: 0px;
                 border-right: 1px solid #2b3849;
                 border-bottom: 1px solid #2b3849;
-                padding: 8px;
+                padding: 7px;
                 font-weight: 800;
             }
             QHeaderView::section:first {
@@ -1539,46 +2033,43 @@ class MainWindow(QtWidgets.QMainWindow):
                 border-top-left-radius: 0px;
             }
             QAbstractScrollArea::corner {
-                background: #1d2836;
-                border: 0px;
+                background: #101722;
+                border-top: 1px solid #2b3849;
+                border-left: 1px solid #2b3849;
             }
             QFrame#TableScrollHeader {
                 background: #1d2836;
-                border-left: 1px solid #2b3849;
+                border-left: 2px solid #2b3849;
+                border-right: 0px;
                 border-bottom: 1px solid #2b3849;
+                border-top: 0px;
+                margin: 0px;
+                padding: 0px;
             }
             QTableWidget#AchievementTable QScrollBar:vertical {
-                background: #0f1722;
+                background: transparent;
                 border: none;
-                border-radius: 0px;
-                width: 14px;
-                margin: 37px 0px 0px 0px;
+                width: 16px;
+                margin: 0px;
             }
             QTableWidget#AchievementTable QScrollBar:horizontal {
-                background: #0f1722;
+                background: transparent;
                 border: none;
-                border-top: 1px solid #273344;
-                border-radius: 0px;
-                height: 14px;
+                height: 16px;
                 margin: 0px;
             }
             QTableWidget#AchievementTable QScrollBar::handle:vertical,
-            QTableWidget#AchievementTable QScrollBar::handle:horizontal {
-                background: #31465e;
-                border-radius: 5px;
-                min-height: 32px;
-                min-width: 32px;
-                margin: 2px;
-            }
-            QTableWidget#AchievementTable QScrollBar::handle:hover {
-                background: #3f5d7c;
-            }
-            QTableWidget#AchievementTable QScrollBar::add-line,
-            QTableWidget#AchievementTable QScrollBar::sub-line,
-            QTableWidget#AchievementTable QScrollBar::add-page,
-            QTableWidget#AchievementTable QScrollBar::sub-page {
-                border: none;
+            QTableWidget#AchievementTable QScrollBar::handle:horizontal,
+            QTableWidget#AchievementTable QScrollBar::add-line:vertical,
+            QTableWidget#AchievementTable QScrollBar::sub-line:vertical,
+            QTableWidget#AchievementTable QScrollBar::add-line:horizontal,
+            QTableWidget#AchievementTable QScrollBar::sub-line:horizontal,
+            QTableWidget#AchievementTable QScrollBar::add-page:vertical,
+            QTableWidget#AchievementTable QScrollBar::sub-page:vertical,
+            QTableWidget#AchievementTable QScrollBar::add-page:horizontal,
+            QTableWidget#AchievementTable QScrollBar::sub-page:horizontal {
                 background: transparent;
+                border: none;
             }
         """
         self.setStyleSheet(style)
@@ -1592,21 +2083,75 @@ class MainWindow(QtWidgets.QMainWindow):
                 return True
         return super().eventFilter(obj, event)
 
+    def _refresh_table_geometry(self):
+        self._apply_compact_table_columns()
+        self._update_table_scroll_header()
+        self.table.viewport().update()
+        self.table.horizontalHeader().viewport().update()
+
+    def showEvent(self, event: QtGui.QShowEvent):
+        super().showEvent(event)
+        QtCore.QTimer.singleShot(0, self._refresh_table_geometry)
+        QtCore.QTimer.singleShot(50, self._refresh_table_geometry)
+
     def resizeEvent(self, event: QtGui.QResizeEvent):
         super().resizeEvent(event)
-        QtCore.QTimer.singleShot(0, self._update_table_scroll_header)
+        QtCore.QTimer.singleShot(0, self._refresh_table_geometry)
+
+    def _apply_compact_table_columns(self):
+        if not hasattr(self, "table"):
+            return
+
+        for col in range(7):
+            self.table.setColumnHidden(col, False)
+
+        hh = self.table.horizontalHeader()
+        hh.setStretchLastSection(False)
+
+        base_widths = [70, 220, 260, 380, 170, 90, 46]
+        for col, width in enumerate(base_widths):
+            if col in (0, 6):
+                hh.setSectionResizeMode(col, QtWidgets.QHeaderView.ResizeMode.Fixed)
+            elif col == 3:
+                pass
+            else:
+                hh.setSectionResizeMode(col, QtWidgets.QHeaderView.ResizeMode.Interactive)
+            self.table.setColumnWidth(col, width)
+
+        viewport_width = self.table.viewport().width()
+        total_base = sum(base_widths)
+
+        if viewport_width >= total_base:
+            hh.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        else:
+            hh.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
+            self.table.setColumnWidth(3, base_widths[3])
 
     def _update_table_scroll_header(self):
         if not hasattr(self, "table_scroll_header"):
             return
+
         sb = self.table.verticalScrollBar()
         header = self.table.horizontalHeader()
-        if not sb.isVisible() or sb.maximum() <= 0:
+        if header.width() <= 0 or self.table.viewport().width() <= 0:
             self.table_scroll_header.hide()
             return
-        x = self.table.x() + self.table.width() - sb.width()
-        y = self.table.y()
-        self.table_scroll_header.setGeometry(x, y, sb.width(), header.height())
+        if not sb.isVisible() or sb.maximum() <= 0:
+            if hasattr(sb, "set_reserved_start"):
+                sb.set_reserved_start(0)
+            self.table_scroll_header.hide()
+            return
+
+        sb_geo = sb.geometry()
+        hdr_geo = header.geometry()
+
+        if hasattr(sb, "set_reserved_start"):
+            sb.set_reserved_start(hdr_geo.height() + 1)
+        x = max(0, self.table.width() - sb_geo.width() - 1)
+        y = hdr_geo.y()
+        w = sb_geo.width() + 1
+        h = hdr_geo.height()
+        self.table_scroll_header.setGeometry(x, y, w, h)
         self.table_scroll_header.show()
         self.table_scroll_header.raise_()
 
@@ -1628,8 +2173,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_sort.clear()
         self.cmb_sort.addItems([t("sort_desc"), t("sort_asc")])
         self.cmb_sort.blockSignals(False)
+        self.lbl_sorting.setText(t("sort_label") + ":")
         self.lbl_n.setText(t("n_label"))
         self.lbl_n_unit.setText("min" if self.i18n.lang == "en" else "мин")
+        self.lbl_filters.setText(t("filters_label") + ":")
         self.chk_only_susp.setText(t("only_susp"))
         self.chk_only_exact.setText(t("only_exact"))
         self.btn_reset.setText(t("reset"))
@@ -1684,13 +2231,13 @@ class MainWindow(QtWidgets.QMainWindow):
         lang = "en"
 
         if not url:
-            QtWidgets.QMessageBox.warning(self, self.i18n.t("warning"), self.i18n.t("enter_profile"))
+            ThemedMessageDialog.warning(self, self.i18n.t("warning"), self.i18n.t("enter_profile"))
             return
         if not key:
-            QtWidgets.QMessageBox.warning(self, self.i18n.t("warning"), self.i18n.t("enter_key"))
+            ThemedMessageDialog.warning(self, self.i18n.t("warning"), self.i18n.t("enter_key"))
             return
         if not SteamAPI.looks_like_valid_key_format(key):
-            QtWidgets.QMessageBox.warning(self, self.i18n.t("warning"), self.i18n.t("key_warn"))
+            ThemedMessageDialog.warning(self, self.i18n.t("warning"), self.i18n.t("key_warn"))
             return
 
         self._save_session()
@@ -1831,7 +2378,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def on_error(self, message: str):
         self._finalize_loading()
-        QtWidgets.QMessageBox.critical(self, self.i18n.t("error"), message)
+        ThemedMessageDialog.critical(self, self.i18n.t("error"), message)
 
     def _base_items(self) -> List[Achievement]:
         items = self.achievements[:]
@@ -1872,7 +2419,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         return ordered
 
-
     def _delta_map_ascending(self, items: List[Achievement]) -> Dict[int, Optional[int]]:
         chronological = sorted(items, key=lambda a: (a.unlock_time or 0, a.game_name, a.name))
         deltas: Dict[int, Optional[int]] = {}
@@ -1898,7 +2444,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 continue
             diff = abs(b.unlock_time - a.unlock_time)
             if 0 < diff <= n_sec:
-                marked_ids.add(id(a)); marked_ids.add(id(b))
+                marked_ids.add(id(a))
+                marked_ids.add(id(b))
         return [a for a in items if id(a) in marked_ids]
 
     def _filter_exact_timestamp(self, items: List[Achievement]) -> List[Achievement]:
@@ -1981,20 +2528,52 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chk_only_exact.setChecked(False)
         self.refresh_table()
 
+    def _clear_input_selection_after_dialog(self):
+        for line_edit in self.findChildren(QtWidgets.QLineEdit):
+            line_edit.deselect()
+            line_edit.clearFocus()
+        self.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+
     def _threshold_label(self) -> str:
         if self.chk_only_exact.isChecked():
             return self.i18n.t("thr_exact")
         n = self.spin_n.value()
         return self.i18n.fmt("thr_leq", n=n)
 
+    def _csv_text(self, value: str) -> str:
+        text = str(value or "")
+        replacements = {
+            "≤": "<=",
+            "Δ": "Delta",
+            "⚠": "!",
+            "—": "-",
+        }
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+
+        return text
+
+    def _csv_delta_text(self, value: str) -> str:
+        text = self._csv_text(value)
+        if self.i18n.lang == "en":
+            text = text.replace("м", "m").replace("с", "s")
+        else:
+            text = text.replace("m", "м").replace("s", "с")
+
+        return text
+
+    def _csv_default_filename(self) -> str:
+        return "achievements.csv" if self.i18n.lang == "en" else "достижения.csv"
+
     def export_csv(self):
         t = self.i18n.t
         if self.table.rowCount() == 0:
-            QtWidgets.QMessageBox.information(self, t("info"), t("export_none"))
+            ThemedMessageDialog.information(self, t("info"), t("export_none"))
+            self._clear_input_selection_after_dialog()
             return
 
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, t("save_csv"),
-                                                        "achievements.csv", "CSV (*.csv)")
+                                                        self._csv_default_filename(), "CSV (*.csv)")
         if not path:
             return
 
@@ -2006,34 +2585,68 @@ class MainWindow(QtWidgets.QMainWindow):
         only_exact = "on" if self.chk_only_exact.isChecked() else "off"
 
         def write_csv(to_path: str):
-            with open(to_path, "w", newline="", encoding="utf-8-sig") as f:
+            with open(to_path, "w", newline="", encoding="cp1251", errors="replace") as f:
+                if self.i18n.lang == "ru":
+                    export_title = "Экспорт Steam Achievement Inspector"
+                    exported_label = "Экспортировано"
+                    profile_label = "Профиль"
+                    ui_language_label = "Язык интерфейса"
+                    game_filter_label = "Фильтр игр"
+                    sort_label_name = "Сортировка"
+                    threshold_label = "Порог"
+                    only_suspicious_label = "Фильтр подозрительных"
+                    only_exact_label = "Фильтр одинаковых таймстампов"
+                else:
+                    export_title = "Steam Achievement Inspector export"
+                    exported_label = "Exported"
+                    profile_label = "Profile"
+                    ui_language_label = "UI language"
+                    game_filter_label = "Game filter"
+                    sort_label_name = "Sort"
+                    threshold_label = "Threshold"
+                    only_suspicious_label = "Only suspicious filter"
+                    only_exact_label = "Only exact filter"
+
                 f.write("sep=;\n")
-                f.write("# Steam Achievement Inspector export\n")
-                f.write(f"# Exported: {exported_at}\n")
-                f.write(f"# Profile: {self.current_profile_url}\n")
-                f.write(f"# UI language: {self.i18n.lang}\n")
-                f.write(f"# Game filter: {game_filter}\n")
-                f.write(f"# Sort: {sort_label}\n")
-                f.write(f"# Threshold: {threshold_text}\n")
-                f.write(f"# Only suspicious filter: {only_susp}\n")
-                f.write(f"# Only exact filter: {only_exact}\n")
+                f.write(f"# {self._csv_text(export_title)}\n")
+                f.write(f"# {self._csv_text(exported_label)}: {self._csv_text(exported_at)}\n")
+                f.write(f"# {self._csv_text(profile_label)}: {self._csv_text(self.current_profile_url)}\n")
+                f.write(f"# {self._csv_text(ui_language_label)}: {self._csv_text(self.i18n.lang)}\n")
+                f.write(f"# {self._csv_text(game_filter_label)}: {self._csv_text(game_filter)}\n")
+                f.write(f"# {self._csv_text(sort_label_name)}: {self._csv_text(sort_label)}\n")
+                f.write(f"# {self._csv_text(threshold_label)}: {self._csv_text(threshold_text)}\n")
+                f.write(f"# {self._csv_text(only_suspicious_label)}: {self._csv_text(only_susp)}\n")
+                f.write(f"# {self._csv_text(only_exact_label)}: {self._csv_text(only_exact)}\n")
 
                 w = csv.writer(f, delimiter=";")
-                w.writerow([t("hdr_game"), t("hdr_ach"), t("hdr_desc"),
-                            t("hdr_time"), t("hdr_delta"), "Suspicious"])
+                w.writerow([
+                    self._csv_text(t("hdr_game")),
+                    self._csv_text(t("hdr_ach")),
+                    self._csv_text(t("hdr_desc")),
+                    self._csv_text(t("hdr_time")),
+                    "Delta t",
+                    "Suspicious",
+                ])
                 for r in range(self.table.rowCount()):
-                    def text(c):
+                    def cell_text(c):
                         it = self.table.item(r, c)
                         return it.text() if it else ""
-                    w.writerow([text(1), text(2), text(3), text(4), text(5),
-                                (t("susp_yes") if text(6) else "")])
+
+                    w.writerow([
+                        self._csv_text(cell_text(1)),
+                        self._csv_text(cell_text(2)),
+                        self._csv_text(cell_text(3)),
+                        self._csv_text(cell_text(4)),
+                        self._csv_delta_text(cell_text(5)),
+                        (self._csv_text(t("susp_yes")) if cell_text(6) else ""),
+                    ])
 
         try:
             write_csv(path)
         except PermissionError:
             base, ext = os.path.splitext(path)
             alt = f"{base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext or '.csv'}"
-            QtWidgets.QMessageBox.warning(
+            ThemedMessageDialog.warning(
                 self, self.i18n.t("error"),
                 "Can't write the file (permission denied). Close it in Excel or choose another path."
             )
@@ -2043,7 +2656,8 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 return
 
-        QtWidgets.QMessageBox.information(self, t("info"), t("export_done"))
+        ThemedMessageDialog.information(self, t("info"), t("export_done"))
+        self._clear_input_selection_after_dialog()
 
 
 def main():
