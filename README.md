@@ -10,6 +10,7 @@ It fetches a profile’s games and achievements, sorts them by time, and lets yo
 - Enter **Steam profile URL** (`profiles/<steamid64>`, `id/<vanity>`, or raw steamid64).
 - Enter your **Steam Web API Key** ([how to get it](#how-to-get-a-steam-web-api-key)).
 - Click **Load**. If nothing appears or only partial data loads, see [Why it might show nothing](#why-it-might-show-nothing).
+- If the app noticeably lags during loading or while scrolling through the list, you can disable achievement icon loading in the **Icons** section. This reduces the load and makes the interface faster.
 - The API key, profile fields, and selected language are saved between app launches unless you clear them manually.
 
 Then you can sort achievements by unlock time, filter achievements with identical timestamps or very small time gaps, set your own **suspicion** threshold for the time between achievements (Δt) by changing the value of N (1 ≤ N ≤ 1440), and export the resulting data to a CSV file with all metadata.
@@ -84,6 +85,7 @@ If this tool helped, great! You can also audit your own profile — and if you e
 - Введите **URL профиля Steam** (поддерживаются `profiles/<steamid64>`, `id/<vanity>` и чистый steamid64).
 - Введите **Steam Web API Key** ([как получить](#как-получить-steam-web-api-key)).
 - Нажмите **Загрузить** и ожидайте подгрузки всех игр и достижений (если не грузит или грузит частично — см. раздел [почему может ничего не показывать](#почему-может-ничего-не-показывать)).
+- Если приложение заметно лагает во время загрузки или прокрутки списка, можно отключить загрузку иконок достижений в разделе **Иконки**. Это снизит нагрузку и ускорит работу интерфейса.
 - Поля API-ключа, профиля и выбранный язык сохраняются между запусками приложения, если их не очищать вручную.
 
 Далее вы можете сортировать достижения по времени получения, фильтровать по достижениям с одинаковым таймстампом или с маленькой разницей во времени, ставить собственные **подозрения** по времени между достижениями (Δt), меняя значение N (1 ≤ N ≤ 1440), а также экспортировать полученные данные в CSV со всеми метаданными.

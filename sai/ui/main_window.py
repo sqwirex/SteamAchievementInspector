@@ -1,6 +1,7 @@
 import csv
 import os
 import threading
+from contextlib import suppress
 from collections import deque
 from datetime import datetime
 from typing import Dict, List, Optional, Set
@@ -13,7 +14,7 @@ from sai.models import Achievement
 from sai.paths import resource_path
 from sai.steam_api import SteamAPI
 from sai.workers import GameFetchWorker, ListGamesWorker
-from sai.ui.delegates import NoHighlightDelegate
+from sai.ui.delegates import NoHighlightDelegate, OffsetHeaderView
 from sai.ui.popups import ThemedMessageDialog
 from sai.ui.scrollbars import CapsuleScrollBar
 from sai.ui.widgets import CustomComboBox, QuietTable, RoundedProgressBar, SmartSpinBox, StyledClearLineEdit
@@ -37,6 +38,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.total_games: int = 0
         self.loaded_games: int = 0
         self.cancel_event = threading.Event()
+        self._stopped_during_game_list_loading = False
+        self._loading_game_list = False
+        self._export_blocked_until_ready = False
 
         self._workers: List[QtCore.QRunnable] = []
 
@@ -45,16 +49,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self._game_queue: deque[Dict] = deque()
         self._active_workers: int = 0
         self.current_api_key = ""
-        self.current_lang = "en"
         self.current_steamid = ""
         self.current_profile_url = ""
         self.settings = QtCore.QSettings("SqwireX", "SteamAchievementInspector")
+        self.icons_enabled: bool = True
+        self._status_key: str = "shown"
+        self._status_kwargs: Dict[str, int] = {"n": 0}
 
         self.threadpool = QtCore.QThreadPool.globalInstance()
         self.threadpool.setMaxThreadCount(self.max_workers)
 
         self.icon_cache: Dict[str, QtGui.QIcon] = {}
         self.icon_downloading: Set[str] = set()
+        self.icon_replies: Dict[str, QNetworkReply] = {}
         self.net = QNetworkAccessManager(self)
         self.net.finished.connect(self._on_icon_loaded)
         self._pending_icon_urls: Set[str] = set()
@@ -62,7 +69,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_timer = QtCore.QTimer(self)
         self.refresh_timer.setSingleShot(True)
         self.refresh_timer.setInterval(150)
-        self.refresh_timer.timeout.connect(self.refresh_table)
+        self.refresh_timer.timeout.connect(lambda: self.refresh_table(update_status=False))
 
         self._build_ui()
         app = QtWidgets.QApplication.instance()
@@ -133,26 +140,35 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_lang.setCurrentIndex(0)
         self.cmb_lang.currentIndexChanged.connect(self.on_ui_lang_changed)
 
+        self.lbl_icons = QtWidgets.QLabel()
+        self.lbl_icons.setObjectName("FieldLabel")
+        self.cmb_icons = CustomComboBox()
+        self.cmb_icons.addItem("Load icons", userData=True)
+        self.cmb_icons.addItem("Do not load", userData=False)
+        self.cmb_icons.setCurrentIndex(0)
+        self.cmb_icons.currentIndexChanged.connect(self.on_icons_mode_changed)
+
         self.btn_fetch = QtWidgets.QPushButton()
         self.btn_fetch.setObjectName("PrimaryButton")
         self.btn_fetch.clicked.connect(self.on_fetch)
 
         self.btn_stop = QtWidgets.QPushButton()
         self.btn_stop.setObjectName("DangerButton")
-        self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self.on_stop)
 
         self.btn_export = QtWidgets.QPushButton()
-        self.btn_export.setObjectName("GhostButton")
+        self.btn_export.setObjectName("ExportButton")
         self.btn_export.clicked.connect(self.export_csv)
 
         top.addWidget(self.lbl_profile, 0, 0)
-        top.addWidget(self.edt_profile, 0, 1, 1, 5)
+        top.addWidget(self.edt_profile, 0, 1, 1, 6)
 
         top.addWidget(self.lbl_api, 1, 0)
-        top.addWidget(self.edt_key, 1, 1, 1, 3)
-        top.addWidget(self.lbl_lang, 1, 4)
-        top.addWidget(self.cmb_lang, 1, 5)
+        top.addWidget(self.edt_key, 1, 1, 1, 2)
+        top.addWidget(self.lbl_icons, 1, 3)
+        top.addWidget(self.cmb_icons, 1, 4)
+        top.addWidget(self.lbl_lang, 1, 5)
+        top.addWidget(self.cmb_lang, 1, 6)
 
         actions = QtWidgets.QHBoxLayout()
         actions.setSpacing(8)
@@ -165,8 +181,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         top.setColumnStretch(1, 2)
         top.setColumnStretch(2, 2)
-        top.setColumnStretch(3, 2)
-        top.setColumnStretch(5, 1)
+        top.setColumnStretch(4, 1)
+        top.setColumnStretch(6, 1)
 
         filters = QtWidgets.QGridLayout()
         filters.setHorizontalSpacing(12)
@@ -180,7 +196,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_game.currentIndexChanged.connect(self.refresh_table)
 
         self.cmb_sort = CustomComboBox()
-        self.cmb_sort.currentIndexChanged.connect(self.refresh_table)
+        self.cmb_sort.currentIndexChanged.connect(lambda *_: self.refresh_table(update_status=False))
 
         self.lbl_sorting = QtWidgets.QLabel()
         self.lbl_sorting.setObjectName("FieldLabel")
@@ -191,7 +207,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.spin_n.setRange(1, 1440)
         self.spin_n.setValue(2)
         self.spin_n.setFixedWidth(98)
-        self.spin_n.valueChanged.connect(self.refresh_table)
+        self.spin_n.valueChanged.connect(lambda *_: self.refresh_table(update_status=False))
         self.lbl_n_unit = QtWidgets.QLabel()
         self.lbl_n_unit.setObjectName("FieldLabel")
 
@@ -242,7 +258,7 @@ class MainWindow(QtWidgets.QMainWindow):
         table_card = QtWidgets.QFrame()
         table_card.setObjectName("TableCard")
         table_l = QtWidgets.QVBoxLayout(table_card)
-        table_l.setContentsMargins(1, 1, 1, 1)
+        table_l.setContentsMargins(1, 0, 1, 1)
         table_l.setSpacing(0)
 
         self.table = QuietTable(0, 7)
@@ -258,7 +274,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.setIconSize(QtCore.QSize(34, 34))
         self.table.setAlternatingRowColors(True)
-        self.table.setShowGrid(False)
+        self.table.setShowGrid(True)
+        self.table.setGridStyle(QtCore.Qt.PenStyle.SolidLine)
         self.table.setWordWrap(False)
         self.table.setMouseTracking(True)
         self.table.viewport().setMouseTracking(True)
@@ -269,8 +286,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
+        self.table.setHorizontalHeader(OffsetHeaderView(QtCore.Qt.Orientation.Horizontal, self.table))
         hh = self.table.horizontalHeader()
         hh.setDefaultSectionSize(200)
+        hh.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         hh.setMinimumSectionSize(44)
         hh.setHighlightSections(False)
         hh.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Fixed)
@@ -294,6 +313,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table_scroll_header = QtWidgets.QFrame(self.table)
         self.table_scroll_header.setObjectName("TableScrollHeader")
         self.table_scroll_header.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.table_scroll_header.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.table_scroll_header.setAutoFillBackground(True)
+        self.table_scroll_header.setStyleSheet("background: #1d2836; border-left: 1px solid #2b3849; border-right: 0px; border-bottom: 1px solid #2b3849; border-top: 0px;")
+        pal = self.table_scroll_header.palette()
+        pal.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor('#1d2836'))
+        self.table_scroll_header.setPalette(pal)
         self.table_scroll_header.hide()
         self.table.verticalScrollBar().rangeChanged.connect(lambda *_: (self._apply_compact_table_columns(), self._update_table_scroll_header()))
         self.table.horizontalHeader().geometriesChanged.connect(self._update_table_scroll_header)
@@ -437,18 +462,29 @@ class MainWindow(QtWidgets.QMainWindow):
                 border-color: #242e3d;
             }
             QPushButton#PrimaryButton {
-                background: #f2c94c;
-                border-color: #ffd666;
-                color: #2d2106;
+                background: #e0b63d;
+                border: 1px solid #b88a17;
+                color: #111111;
             }
-            QPushButton#PrimaryButton:hover { background: #f6d565; }
-            QPushButton#PrimaryButton:pressed { background: #ddb53d; }
+            QPushButton#PrimaryButton:hover {
+                background: #f0c955;
+                border: 1px solid #c99b28;
+                color: #0f0f0f;
+            }
+            QPushButton#PrimaryButton:pressed {
+                background: #cda231;
+                border: 1px solid #a6780f;
+                color: #101010;
+            }
             QPushButton#DangerButton {
                 background: #3a2028;
-                border-color: #713444;
+                border: 1px solid #9b4054;
                 color: #ffd9df;
             }
-            QPushButton#DangerButton:hover { background: #542733; }
+            QPushButton#DangerButton:hover {
+                background: #542733;
+                border: 1px solid #c24a63;
+            }
             QPushButton#GhostButton {
                 background: transparent;
                 color: #c4d1de;
@@ -458,6 +494,25 @@ class MainWindow(QtWidgets.QMainWindow):
                 background: #18212d;
                 color: #ffd34d;
                 border-color: #50647d;
+            }
+            QPushButton#ExportButton {
+                background: #183b2d;
+                color: #ecfdf5;
+                border-color: #2f7d55;
+            }
+            QPushButton#ExportButton:hover {
+                background: #1f6f4a;
+                color: #ffffff;
+                border-color: #34d399;
+            }
+            QPushButton#ExportButton:pressed {
+                background: #14532d;
+                border-color: #2f7d55;
+            }
+            QPushButton#ExportButton:disabled {
+                background: #111827;
+                color: #6b7280;
+                border-color: #374151;
             }
             QCheckBox {
                 color: #dbe7f3;
@@ -482,11 +537,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 border: 0px;
                 border-bottom: 0px;
                 border-radius: 0px;
-                gridline-color: #263344;
+                gridline-color: #243142;
             }
             QTableWidget#AchievementTable::item {
                 padding: 7px;
-                border-bottom: 1px solid #202b3a;
+                border: 0px;
             }
             QTableWidget#AchievementTable::item:selected {
                 background: transparent;
@@ -617,9 +672,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for col, width in enumerate(base_widths):
             if col in (0, 6):
                 hh.setSectionResizeMode(col, QtWidgets.QHeaderView.ResizeMode.Fixed)
-            elif col == 3:
-                pass
-            else:
+            elif col != 3:
                 hh.setSectionResizeMode(col, QtWidgets.QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(col, width)
 
@@ -652,13 +705,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if hasattr(sb, "set_reserved_start"):
             sb.set_reserved_start(hdr_geo.height() + 1)
-        x = max(0, self.table.width() - sb_geo.width() - 1)
+        x = max(0, self.table.width() - sb_geo.width() + 1)
         y = hdr_geo.y()
-        w = sb_geo.width() + 1
+        w = sb_geo.width() + 2
         h = hdr_geo.height()
         self.table_scroll_header.setGeometry(x, y, w, h)
         self.table_scroll_header.show()
         self.table_scroll_header.raise_()
+        self.table_scroll_header.update()
 
     def _retranslate_ui(self):
         t = self.i18n.t
@@ -670,6 +724,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_api.setText(t("api_key") + ":")
         self.edt_key.setPlaceholderText(t("api_key_ph"))
         self.lbl_lang.setText(t("language") + ":")
+        self.lbl_icons.setText(t("icons_label") + ":")
+        icons_value = self.cmb_icons.currentData()
+        if icons_value is None:
+            icons_value = self.icons_enabled
+        self.cmb_icons.blockSignals(True)
+        self.cmb_icons.clear()
+        self.cmb_icons.addItem(t("icons_on"), userData=True)
+        self.cmb_icons.addItem(t("icons_off"), userData=False)
+        icons_index = self.cmb_icons.findData(bool(icons_value))
+        self.cmb_icons.setCurrentIndex(max(0, icons_index))
+        self.cmb_icons.blockSignals(False)
         self.btn_fetch.setText(t("load"))
         self.btn_stop.setText(t("stop"))
         self.btn_export.setText(t("export_csv").replace("…", ""))
@@ -686,9 +751,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chk_only_exact.setText(t("only_exact"))
         self.btn_reset.setText(t("reset"))
         self.table.setHorizontalHeaderLabels(
-            [t("hdr_icon"), t("hdr_game"), t("hdr_ach"), t("hdr_desc"), t("hdr_time"), t("hdr_delta"), t("hdr_flag")]
+            [t("hdr_icon"), t("hdr_game"), t("hdr_ach"), t("hdr_desc"), t("hdr_time"), t("hdr_delta"), "⚠"]
         )
-        self.lbl_status.setText(t("ready"))
+        self._render_status()
         self.cmb_game.blockSignals(True)
         if self.cmb_game.count() == 0:
             self.cmb_game.addItem(t("all_games"), userData=None)
@@ -696,10 +761,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cmb_game.setItemText(0, t("all_games"))
         self.cmb_game.blockSignals(False)
 
+    def _set_status(self, key: str, **kwargs):
+        self._status_key = key
+        self._status_kwargs = dict(kwargs)
+        self._render_status()
+
+    def _render_status(self):
+        if not hasattr(self, "lbl_status"):
+            return
+        if self._status_kwargs:
+            self.lbl_status.setText(self.i18n.fmt(self._status_key, **self._status_kwargs))
+        else:
+            self.lbl_status.setText(self.i18n.t(self._status_key))
+
     def _load_session(self):
         api_key = self.settings.value("api_key", "", type=str) or ""
         profile_url = self.settings.value("profile_url", "", type=str) or ""
         lang = self.settings.value("language", "en", type=str) or "en"
+        self.icons_enabled = self.settings.value("icons_enabled", True, type=bool)
 
         if api_key:
             self.edt_key.setText(api_key)
@@ -713,10 +792,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.cmb_lang.blockSignals(False)
             self.i18n.set_lang(lang)
 
+        icons_index = self.cmb_icons.findData(self.icons_enabled)
+        if icons_index >= 0:
+            self.cmb_icons.blockSignals(True)
+            self.cmb_icons.setCurrentIndex(icons_index)
+            self.cmb_icons.blockSignals(False)
+
     def _save_session(self):
         self.settings.setValue("api_key", self.edt_key.text().strip())
         self.settings.setValue("profile_url", self.edt_profile.text().strip())
         self.settings.setValue("language", self.cmb_lang.currentData() or "en")
+        self.settings.setValue("icons_enabled", self.icons_enabled)
         self.settings.sync()
 
     def closeEvent(self, event: QtGui.QCloseEvent):
@@ -730,10 +816,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.sync()
         self._retranslate_ui()
 
+    def on_icons_mode_changed(self):
+        enabled = bool(self.cmb_icons.currentData())
+        if enabled == self.icons_enabled:
+            return
+
+        self.icons_enabled = enabled
+        self.settings.setValue("icons_enabled", self.icons_enabled)
+        self.settings.sync()
+
+        if self.icons_enabled:
+            self._queue_missing_icons()
+            self._kick_icon_prefetch()
+        else:
+            self._stop_icon_downloads()
+
+        self.refresh_table(update_status=False)
+
     def on_fetch(self):
         url = self.edt_profile.text().strip()
         key = self.edt_key.text().strip()
-        lang = "en"
+        lang = self.cmb_lang.currentData() or "en"
 
         if not url:
             ThemedMessageDialog.warning(self, self.i18n.t("warning"), self.i18n.t("enter_profile"))
@@ -748,6 +851,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._save_session()
 
         self.cancel_event.clear()
+        self._stopped_during_game_list_loading = False
+        self._loading_game_list = True
+        self._export_blocked_until_ready = True
         self.btn_fetch.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.progress.setValue(0)
@@ -763,20 +869,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_game.addItem(self.i18n.t("all_games"), userData=None)
         self.cmb_game.blockSignals(False)
         self.table.setRowCount(0)
-        self.icon_cache.clear()
-        self.icon_downloading.clear()
-        self._pending_icon_urls.clear()
-        self.lbl_status.setText(self.i18n.t("loading_games"))
+        self._stop_icon_downloads()
 
         self.current_api_key = key
-        self.current_lang = lang
         self.current_profile_url = url
 
         lgw = ListGamesWorker(key, url, lang)
         self._workers.append(lgw)
+        lgw.signals.loading_games.connect(self._on_game_list_loading_started)
         lgw.signals.finished.connect(
             lambda steamid64, games, w=lgw: (self._safe_remove_worker(w),
-                                             self._on_games_list_ready(key, lang, steamid64, games))
+                                             self._on_games_list_ready(key, steamid64, games))
         )
         lgw.signals.error.connect(
             lambda msg, w=lgw: (self._safe_remove_worker(w), self.on_error(msg))
@@ -784,23 +887,41 @@ class MainWindow(QtWidgets.QMainWindow):
         self.threadpool.start(lgw)
 
     def _safe_remove_worker(self, w: QtCore.QRunnable):
-        try:
+        with suppress(ValueError):
             self._workers.remove(w)
-        except ValueError:
-            pass
 
     def on_stop(self):
-        self.cancel_event.set()
-        self.btn_stop.setEnabled(False)
+        if not self._export_blocked_until_ready:
+            ThemedMessageDialog.warning(self, self.i18n.t("warning"), self.i18n.t("stop_not_loading"))
+            self._clear_input_selection_after_dialog()
+            return
 
-    def _on_games_list_ready(self, api_key: str, lang: str, steamid64: str, games: List[Dict]):
+        self.btn_stop.setEnabled(False)
+        if self._loading_game_list and not self.btn_fetch.isEnabled():
+            self._stopped_during_game_list_loading = True
+        self.cancel_event.set()
+
+    def _on_game_list_loading_started(self):
+        if not self.cancel_event.is_set() and self._loading_game_list:
+            self._set_status("loading_games")
+
+    def _on_games_list_ready(self, api_key: str, steamid64: str, games: List[Dict]):
+        self._loading_game_list = False
         if self.cancel_event.is_set():
-            self._finalize_loading()
+            self._finalize_loading(stopped=True)
             return
 
         self.current_steamid = steamid64
         self.total_games = len(games)
-        self.lbl_status.setText(self.i18n.fmt("found_games", n=self.total_games))
+        if self.total_games == 0:
+            self._finalize_loading(completed=False)
+            self.progress.setValue(0)
+            self._set_status("no_games_status")
+            ThemedMessageDialog.information(self, self.i18n.t("info"), self.i18n.t("no_games"))
+            self._clear_input_selection_after_dialog()
+            return
+
+        self._set_status("found_games", n=self.total_games)
 
         self.games_index = {g["appid"]: g["name"] for g in games}
         self.cmb_game.blockSignals(True)
@@ -817,7 +938,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _start_next_jobs(self):
         while (not self.cancel_event.is_set()) and self._game_queue and (self._active_workers < self.max_workers):
             g = self._game_queue.popleft()
-            worker = GameFetchWorker(self.current_api_key, self.current_lang, self.current_steamid, g, self.cancel_event)
+            worker = GameFetchWorker(self.current_api_key, self.current_steamid, g, self.cancel_event)
             self._workers.append(worker)
 
             worker.signals.partial.connect(self._on_game_partial)
@@ -831,34 +952,58 @@ class MainWindow(QtWidgets.QMainWindow):
         self.loaded_games += 1
         self._active_workers = max(0, self._active_workers - 1)
         self._update_progress_label()
+
         if not self.cancel_event.is_set() and self._game_queue:
             self._start_next_jobs()
-        if self.loaded_games >= self.total_games or self.cancel_event.is_set():
-            self._finalize_loading()
+
+        if self.loaded_games >= self.total_games:
+            self._finalize_loading(completed=True)
+            return
+
+        if self.cancel_event.is_set() and self._active_workers == 0:
+            self._finalize_loading(completed=False, stopped=True)
 
     def _on_game_partial(self, achs: List[Achievement]):
-        if self.cancel_event.is_set():
-            return
         if achs:
             self.achievements.extend(achs)
-            for a in achs:
-                if a.icon_url and (a.icon_url not in self.icon_cache) and (a.icon_url not in self.icon_downloading):
-                    self._pending_icon_urls.add(a.icon_url)
-            self._kick_icon_prefetch()
+            if self.icons_enabled and not self.cancel_event.is_set():
+                for a in achs:
+                    if a.icon_url and (a.icon_url not in self.icon_cache) and (a.icon_url not in self.icon_downloading):
+                        self._pending_icon_urls.add(a.icon_url)
+                self._kick_icon_prefetch()
             if not self.refresh_timer.isActive():
                 self.refresh_timer.start()
 
+    def _queue_missing_icons(self):
+        for a in self.achievements:
+            if a.icon_url and (a.icon_url not in self.icon_cache) and (a.icon_url not in self.icon_downloading):
+                self._pending_icon_urls.add(a.icon_url)
+
+    def _stop_icon_downloads(self):
+        self._pending_icon_urls.clear()
+        for reply in list(self.icon_replies.values()):
+            if reply.isRunning():
+                reply.abort()
+        self.icon_replies.clear()
+        self.icon_downloading.clear()
+
     def _kick_icon_prefetch(self):
+        if not self.icons_enabled:
+            self._pending_icon_urls.clear()
+            return
+
         while self._pending_icon_urls and len(self.icon_downloading) < 8:
             url = self._pending_icon_urls.pop()
             self.icon_downloading.add(url)
             req = QNetworkRequest(QtCore.QUrl(url))
-            self.net.get(req)
+            reply = self.net.get(req)
+            self.icon_replies[url] = reply
 
     def _on_icon_loaded(self, reply: QNetworkReply):
         url = reply.url().toString()
         try:
-            if reply.error() == QNetworkReply.NetworkError.NoError:
+            self.icon_replies.pop(url, None)
+            if self.icons_enabled and reply.error() == QNetworkReply.NetworkError.NoError:
                 data = reply.readAll().data()
                 pix = QtGui.QPixmap()
                 if pix.loadFromData(data):
@@ -870,19 +1015,41 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.refresh_timer.start()
             self._kick_icon_prefetch()
 
-    def _finalize_loading(self):
+    def _finalize_loading(self, completed: bool = False, stopped: bool = False):
+        self._export_blocked_until_ready = False
+        self._loading_game_list = False
         self.btn_fetch.setEnabled(True)
         self.btn_stop.setEnabled(False)
-        self.progress.setValue(100)
+
+        done = min(self.loaded_games, self.total_games) if self.total_games else 0
+        pct = int(100 * done / max(1, self.total_games))
+
+        if self.refresh_timer.isActive():
+            self.refresh_timer.stop()
+
+        self.refresh_table(update_status=False)
+
+        self.progress.setValue(100 if completed or stopped else pct)
+
+        if stopped:
+            if self._stopped_during_game_list_loading:
+                self._set_status("stop")
+            else:
+                self._set_status("stopped_processed", done=done, total=self.total_games, ach=len(self.achievements))
+            self._stopped_during_game_list_loading = False
+        elif completed:
+            self._set_status("ready_shown", n=self.table.rowCount())
 
     def _update_progress_label(self):
         done = min(self.loaded_games, self.total_games) if self.total_games else 0
         pct = int(100 * done / max(1, self.total_games))
         self.progress.setValue(pct)
-        self.lbl_status.setText(self.i18n.fmt("processed", done=done, total=self.total_games, ach=len(self.achievements)))
+        self._set_status("processed", done=done, total=self.total_games, ach=len(self.achievements))
 
     def on_error(self, message: str):
+        self._loading_game_list = False
         self._finalize_loading()
+        self._set_status("error")
         ThemedMessageDialog.critical(self, self.i18n.t("error"), message)
 
     def _base_items(self) -> List[Achievement]:
@@ -965,9 +1132,10 @@ class MainWindow(QtWidgets.QMainWindow):
         keep_idx = sorted(set(keep_idx))
         return [items[i] for i in keep_idx]
 
-    def refresh_table(self):
+    def refresh_table(self, *args, update_status: bool = True):
         t = self.i18n
         items = self._filtered_sorted()
+        self.table.setUpdatesEnabled(False)
         self.table.setRowCount(0)
 
         source_items = self._base_items()
@@ -980,37 +1148,53 @@ class MainWindow(QtWidgets.QMainWindow):
         n_sec_threshold = self.spin_n.value() * 60
         warn_color = QtGui.QColor("#f59f00")
 
+        dash = t.t("dash")
+
         for a in items:
             row = self.table.rowCount()
             self.table.insertRow(row)
 
             icon_item = QtWidgets.QTableWidgetItem()
-            ic = self.icon_cache.get(a.icon_url)
+            icon_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            ic = self.icon_cache.get(a.icon_url) if self.icons_enabled else None
             if ic:
                 icon_item.setIcon(ic)
             self.table.setItem(row, 0, icon_item)
 
-            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(a.game_name))
-            self.table.setItem(row, 2, QtWidgets.QTableWidgetItem(self._achievement_display_name(a)))
-            self.table.setItem(row, 3, QtWidgets.QTableWidgetItem(self._achievement_display_description(a)))
+            game_item = QtWidgets.QTableWidgetItem(a.game_name)
+            game_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 1, game_item)
+
+            ach_item = QtWidgets.QTableWidgetItem(self._achievement_display_name(a))
+            ach_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 2, ach_item)
+
+            desc_item = QtWidgets.QTableWidgetItem(self._achievement_display_description(a))
+            desc_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 3, desc_item)
 
             dt = a.unlock_dt()
-            ts_str = dt.strftime("%Y-%m-%d %H:%M:%S") if dt else t.t("dash")
-            self.table.setItem(row, 4, QtWidgets.QTableWidgetItem(ts_str))
+            ts_str = dt.strftime("%Y-%m-%d %H:%M:%S") if dt else dash
+            ts_item = QtWidgets.QTableWidgetItem(ts_str)
+            ts_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 4, ts_item)
 
             d = delta_by_id.get(id(a))
             if d is None or not a.unlock_time:
-                delta_str = t.t("dash"); delta_ok = False
+                delta_str = dash
+                delta_ok = False
             else:
-                mins = d // 60; secs = d % 60
+                mins = d // 60
+                secs = d % 60
                 delta_str = (t.fmt("mins_secs_fmt", m=mins, s=secs) if mins > 0
                              else t.fmt("secs_fmt", s=secs))
                 delta_ok = d <= max(1, n_sec_threshold)
             delta_item = QtWidgets.QTableWidgetItem(delta_str)
+            delta_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, 5, delta_item)
 
             is_exact_dup = bool(a.unlock_time and exact_count.get(a.unlock_time, 0) >= 2)
-            suspicious = is_exact_dup or (delta_str != t.t("dash") and delta_ok)
+            suspicious = is_exact_dup or (delta_str != dash and delta_ok)
 
             flag_item = QtWidgets.QTableWidgetItem("⚠" if suspicious else "")
             flag_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
@@ -1022,16 +1206,48 @@ class MainWindow(QtWidgets.QMainWindow):
             self.table.setItem(row, 6, flag_item)
 
         self.table.resizeRowsToContents()
-        self.lbl_status.setText(t.fmt("shown", n=self.table.rowCount()))
+        self.table.setUpdatesEnabled(True)
+        if self.icons_enabled:
+            self._queue_missing_icons()
+            self._kick_icon_prefetch()
+
+        if update_status and not self._export_blocked_until_ready:
+            self._set_status("shown", n=self.table.rowCount())
         self._update_table_scroll_header()
 
     def reset_filters(self):
+        view_changed = (
+            self.cmb_sort.currentIndex() != 0
+            or self.spin_n.value() != 2
+        )
+        filter_changed = (
+            self.cmb_game.currentIndex() != 0
+            or self.chk_only_susp.isChecked()
+            or self.chk_only_exact.isChecked()
+        )
+        changed = view_changed or filter_changed
+
+        controls = (
+            self.cmb_game,
+            self.cmb_sort,
+            self.spin_n,
+            self.chk_only_susp,
+            self.chk_only_exact,
+        )
+        for control in controls:
+            control.blockSignals(True)
+
         self.cmb_game.setCurrentIndex(0)
         self.cmb_sort.setCurrentIndex(0)
         self.spin_n.setValue(2)
         self.chk_only_susp.setChecked(False)
         self.chk_only_exact.setChecked(False)
-        self.refresh_table()
+
+        for control in controls:
+            control.blockSignals(False)
+
+        if changed:
+            self.refresh_table(update_status=filter_changed)
 
     def _clear_input_selection_after_dialog(self):
         for line_edit in self.findChildren(QtWidgets.QLineEdit):
@@ -1072,6 +1288,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def export_csv(self):
         t = self.i18n.t
+        if self._export_blocked_until_ready:
+            ThemedMessageDialog.warning(self, t("warning"), t("export_loading"))
+            self._clear_input_selection_after_dialog()
+            return
         if self.table.rowCount() == 0:
             ThemedMessageDialog.information(self, t("info"), t("export_none"))
             self._clear_input_selection_after_dialog()
@@ -1080,6 +1300,7 @@ class MainWindow(QtWidgets.QMainWindow):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, t("save_csv"),
                                                         self._csv_default_filename(), "CSV (*.csv)")
         if not path:
+            self._clear_input_selection_after_dialog()
             return
 
         exported_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1153,12 +1374,13 @@ class MainWindow(QtWidgets.QMainWindow):
             alt = f"{base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext or '.csv'}"
             ThemedMessageDialog.warning(
                 self, self.i18n.t("error"),
-                "Can't write the file (permission denied). Close it in Excel or choose another path."
+                self.i18n.t("export_permission_denied")
             )
             new_path, _ = QtWidgets.QFileDialog.getSaveFileName(self, t("save_csv"), alt, "CSV (*.csv)")
             if new_path:
                 write_csv(new_path)
             else:
+                self._clear_input_selection_after_dialog()
                 return
 
         ThemedMessageDialog.information(self, t("info"), t("export_done"))

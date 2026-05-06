@@ -392,7 +392,10 @@ class ThemedMessageDialog(QtWidgets.QWidget):
                 border-radius: 8px;
                 font-size: 18px;
                 font-weight: 700;
-                padding: 0;
+                padding-left: 0;
+                padding-right: 0;
+                padding-top: 0;
+                padding-bottom: 3px;
             }
             QPushButton#DialogCloseButton:hover {
                 background: #212d3d;

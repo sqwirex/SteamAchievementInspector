@@ -1,3 +1,4 @@
+from contextlib import suppress
 from typing import Optional
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -13,9 +14,9 @@ class CapsuleScrollBar(QtWidgets.QScrollBar):
         self.setMouseTracking(True)
 
         if orientation == QtCore.Qt.Orientation.Vertical:
-            self.setFixedWidth(16)
+            self.setFixedWidth(17)
         else:
-            self.setFixedHeight(16)
+            self.setFixedHeight(17)
 
         self.setStyleSheet("""
             QScrollBar {
@@ -46,9 +47,9 @@ class CapsuleScrollBar(QtWidgets.QScrollBar):
         rect = QtCore.QRectF(self.rect())
 
         if self._is_vertical():
-            return rect.adjusted(4.6, self._reserved_start + 2, -3.4, -2)
+            return rect.adjusted(5.0, self._reserved_start + 2, -4.0, -2)
 
-        return rect.adjusted(2, 4.6, -2, -3.4)
+        return rect.adjusted(2, 5.0, -2, -4.0)
 
     def _slider_rect(self) -> QtCore.QRectF:
         track = self._track_rect()
@@ -114,13 +115,17 @@ class CapsuleScrollBar(QtWidgets.QScrollBar):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
 
-        outline_pen = QtGui.QPen(QtGui.QColor("#2b3849"), 2)
+        outline_pen = QtGui.QPen(QtGui.QColor("#2b3849"), 1)
         outline_pen.setCosmetic(True)
         painter.setPen(outline_pen)
+
+        outline_thickness = 2
         if self._is_vertical():
-            painter.drawLine(0, 0, 0, self.height())
+            for x in range(outline_thickness):
+                painter.drawLine(x, 0, x, self.height())
         else:
-            painter.drawLine(0, 0, self.width(), 0)
+            for y in range(outline_thickness):
+                painter.drawLine(0, y, self.width(), y)
 
         track = self._track_rect()
         if track.width() <= 0 or track.height() <= 0:
@@ -189,10 +194,8 @@ class CapsuleScrollBar(QtWidgets.QScrollBar):
         if self._dragging and event.button() == QtCore.Qt.MouseButton.LeftButton:
             self._dragging = False
             self.setSliderDown(False)
-            try:
+            with suppress(RuntimeError):
                 self.releaseMouse()
-            except RuntimeError:
-                pass
             event.accept()
             self.update()
             return

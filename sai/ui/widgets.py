@@ -1,3 +1,4 @@
+from contextlib import suppress
 from typing import Optional, Tuple
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -63,11 +64,49 @@ class QuietTable(QtWidgets.QTableWidget):
         self._hide_preview()
         super().leaveEvent(event)
 
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        super().paintEvent(event)
+        self._erase_trailing_gridline()
+
+    def _erase_trailing_gridline(self) -> None:
+        scrollbar = self.verticalScrollBar()
+        if not scrollbar.isVisible() or self.columnCount() <= 0:
+            return
+
+        last_col = self.columnCount() - 1
+        x = self.columnViewportPosition(last_col) + self.columnWidth(last_col) - 1
+        viewport = self.viewport()
+        if x < 0 or x >= viewport.width():
+            return
+
+        painter = QtGui.QPainter(viewport)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+
+        base_color = QtGui.QColor('#111822')
+        alt_color = QtGui.QColor('#141d29')
+
+        visible_bottom = viewport.height()
+
+        for row in range(self.rowCount()):
+            y = self.rowViewportPosition(row)
+            h = self.rowHeight(row)
+            if y + h <= 0:
+                continue
+            if y >= visible_bottom:
+                break
+
+            top = max(y, 0)
+            bottom = min(y + h, visible_bottom)
+            height = bottom - top
+            if height <= 1:
+                continue
+
+            painter.setBrush(alt_color if (self.alternatingRowColors() and row % 2 == 1) else base_color)
+            painter.drawRect(x, top, 1, height - 1)
+
     def _clear_current(self):
-        try:
+        with suppress(Exception):
             self.selectionModel().clearSelection()
-        except Exception:
-            pass
         self.setCurrentIndex(QtCore.QModelIndex())
         self.clearFocus()
 

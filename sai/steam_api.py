@@ -1,40 +1,49 @@
 import re
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import requests
 
 from .config import API_BASE, HEADERS
 
 
+STEAM_API_LANGUAGE = "en"
+
+
 class InvalidAPIKeyError(PermissionError):
-    pass
+    ...
 
 
 class SteamAPI:
-    def __init__(self, api_key: str, lang: str = "en", timeout: int = 25):
+    def __init__(self, api_key: str, timeout: int = 25):
         self.api_key = api_key
-        self.lang = lang
         self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
 
     def _get(self, url: str, params: Dict) -> Dict:
+        last_response = None
+        last_error = None
+
         for attempt in range(3):
             try:
-                r = self.session.get(url, params=params, timeout=self.timeout)
-                if r.status_code == 200:
-                    return r.json()
-                if r.status_code in (401, 403):
-                    raise InvalidAPIKeyError(f"HTTP {r.status_code}")
+                response = self.session.get(url, params=params, timeout=self.timeout)
+                if response.status_code == 200:
+                    return response.json()
+                if response.status_code in (401, 403):
+                    raise InvalidAPIKeyError(f"HTTP {response.status_code}")
+                last_response = response
+            except requests.RequestException as exc:
+                last_error = exc
+
+            if attempt < 2:
                 time.sleep(0.5 * (attempt + 1))
-            except requests.RequestException:
-                time.sleep(0.5 * (attempt + 1))
-        r = self.session.get(url, params=params, timeout=self.timeout)
-        if r.status_code in (401, 403):
-            raise InvalidAPIKeyError(f"HTTP {r.status_code}")
-        r.raise_for_status()
-        return r.json()
+
+        if last_response is not None:
+            last_response.raise_for_status()
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Steam API request failed.")
 
     @staticmethod
     def looks_like_valid_key_format(key: str) -> bool:
@@ -58,8 +67,8 @@ class SteamAPI:
             data = self._get(url, {"key": self.api_key, "vanityurl": vanity})
             if data and data.get("response", {}).get("success") == 1:
                 return data["response"]["steamid"]
-            raise ValueError("Failed to resolve vanity to steamid64.")
-        raise ValueError("Enter valid Steam profile URL or steamid64/vanity.")
+            raise ValueError("vanity_failed")
+        raise ValueError("invalid_profile")
 
     def verify_key_can_read_profile(self, steamid64: str) -> None:
         url = f"{API_BASE}/ISteamUser/GetPlayerSummaries/v0002/"
@@ -67,7 +76,7 @@ class SteamAPI:
 
     def get_player_achievements_full(self, steamid64: str, appid: int) -> List[Dict]:
         url = f"{API_BASE}/ISteamUserStats/GetPlayerAchievements/v0001/"
-        params = {"key": self.api_key, "steamid": steamid64, "appid": appid, "l": self.lang}
+        params = {"key": self.api_key, "steamid": steamid64, "appid": appid, "l": STEAM_API_LANGUAGE}
         data = self._get(url, params)
         ps = data.get("playerstats", {})
         if ps.get("success") is False:
@@ -79,9 +88,9 @@ class SteamAPI:
             if bool(item.get("achieved", 0))
         ]
 
-    def get_schema_for_game(self, appid: int, lang: Optional[str] = None) -> Dict[str, Dict[str, str]]:
+    def get_schema_for_game(self, appid: int) -> Dict[str, Dict[str, str]]:
         url = f"{API_BASE}/ISteamUserStats/GetSchemaForGame/v2/"
-        params = {"key": self.api_key, "appid": appid, "l": lang or self.lang}
+        params = {"key": self.api_key, "appid": appid, "l": STEAM_API_LANGUAGE}
         data = self._get(url, params)
         game = data.get("game", {})
         stats = game.get("availableGameStats", {}) or {}
