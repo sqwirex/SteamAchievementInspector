@@ -3,6 +3,8 @@
 A desktop tool to analyze Steam achievements and highlight **suspicious unlocks**, typically produced by tools like [**Steam Achievement Manager (SAM)**](https://github.com/gibbed/SteamAchievementManager).  
 It fetches a profile’s games and achievements, sorts them by time, and lets you filter anomalies.
 
+![Steam Achievement Inspector interface](assets/readme-screenshot.png)
+
 > This project is not affiliated with Valve/Steam. For research/moderation use.
 
 ## How to use

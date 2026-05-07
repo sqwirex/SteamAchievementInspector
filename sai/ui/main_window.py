@@ -29,7 +29,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(self.i18n.t("app_title"))
         self.resize(1280, 760)
         self.setMinimumSize(760, 720)
-        app_icon = QtGui.QIcon(resource_path("app.ico"))
+        app_icon = QtGui.QIcon(resource_path("assets/app.ico"))
         self.setWindowIcon(app_icon)
         QtWidgets.QApplication.instance().setWindowIcon(app_icon)
 
@@ -135,8 +135,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_lang = QtWidgets.QLabel()
         self.lbl_lang.setObjectName("FieldLabel")
         self.cmb_lang = CustomComboBox()
-        self.cmb_lang.addItem("English", userData="en")
-        self.cmb_lang.addItem("Русский", userData="ru")
+        for lang_code, lang_name in I18n.LANGUAGES.items():
+            self.cmb_lang.addItem(lang_name, userData=lang_code)
         self.cmb_lang.setCurrentIndex(0)
         self.cmb_lang.currentIndexChanged.connect(self.on_ui_lang_changed)
 
@@ -730,7 +730,7 @@ class MainWindow(QtWidgets.QMainWindow):
         t = self.i18n.t
         self.setWindowTitle(t("app_title"))
         self.lbl_title.setText(t("app_title"))
-        self.lbl_subtitle.setText("Analyze unlock timelines, detect suspicious clusters, export clean CSV reports." if self.i18n.lang == "en" else "Анализ таймлайна достижений, поиск подозрительных кластеров и экспорт в CSV.")
+        self.lbl_subtitle.setText(t("subtitle"))
         self.lbl_profile.setText(t("profile") + ":")
         self.edt_profile.setPlaceholderText(t("profile_ph"))
         self.lbl_api.setText(t("api_key") + ":")
@@ -757,7 +757,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_sort.blockSignals(False)
         self.lbl_sorting.setText(t("sort_label") + ":")
         self.lbl_n.setText(t("n_label"))
-        self.lbl_n_unit.setText("min" if self.i18n.lang == "en" else "мин")
+        self.lbl_n_unit.setText(t("min_unit"))
         self.lbl_filters.setText(t("filters_label") + ":")
         self.chk_only_susp.setText(t("only_susp"))
         self.chk_only_exact.setText(t("only_exact"))
@@ -827,6 +827,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings.setValue("language", lang)
         self.settings.sync()
         self._retranslate_ui()
+        if self.table.rowCount() > 0:
+            self.refresh_table(update_status=False)
 
     def on_icons_mode_changed(self):
         enabled = bool(self.cmb_icons.currentData())
@@ -1046,6 +1048,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.progress.setValue(100)
         elif stopped and self._stopped_during_game_list_loading:
             self.progress.setValue(0)
+        elif stopped:
+            self.progress.setValue(100)
         else:
             self.progress.setValue(pct)
 
@@ -1150,6 +1154,15 @@ class MainWindow(QtWidgets.QMainWindow):
         keep_idx = sorted(set(keep_idx))
         return [items[i] for i in keep_idx]
 
+    def _format_delta_seconds(self, seconds: Optional[int], dash: Optional[str] = None) -> str:
+        if seconds is None:
+            return dash if dash is not None else self.i18n.t("dash")
+        mins = seconds // 60
+        secs = seconds % 60
+        if mins > 0:
+            return self.i18n.fmt("mins_secs_fmt", m=mins, s=secs)
+        return self.i18n.fmt("secs_fmt", s=secs)
+
     def refresh_table(self, *args, update_status: bool = True):
         t = self.i18n
         items = self._filtered_sorted()
@@ -1202,10 +1215,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 delta_str = dash
                 delta_ok = False
             else:
-                mins = d // 60
-                secs = d % 60
-                delta_str = (t.fmt("mins_secs_fmt", m=mins, s=secs) if mins > 0
-                             else t.fmt("secs_fmt", s=secs))
+                delta_str = self._format_delta_seconds(d, dash=dash)
                 delta_ok = d <= max(1, n_sec_threshold)
             delta_item = QtWidgets.QTableWidgetItem(delta_str)
             delta_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
@@ -1295,16 +1305,20 @@ class MainWindow(QtWidgets.QMainWindow):
         return text
 
     def _csv_delta_text(self, value: str) -> str:
-        text = self._csv_text(value)
-        if self.i18n.lang == "en":
-            text = text.replace("м", "m").replace("с", "s")
-        else:
-            text = text.replace("m", "м").replace("s", "с")
-
-        return text
+        return self._csv_text(value)
 
     def _csv_default_filename(self) -> str:
-        return "achievements.csv" if self.i18n.lang == "en" else "достижения.csv"
+        localized_names = {
+            "ru": "достижения.csv",
+            "zh_CN": "成就.csv",
+            "es": "logros.csv",
+            "pt_BR": "conquistas.csv",
+            "de": "erfolge.csv",
+            "fr": "succes.csv",
+            "ja": "実績.csv",
+            "ko": "도전과제.csv",
+        }
+        return localized_names.get(self.i18n.lang, "achievements.csv")
 
     def export_csv(self):
         t = self.i18n.t
@@ -1327,33 +1341,32 @@ class MainWindow(QtWidgets.QMainWindow):
         game_filter = self.cmb_game.currentText() or t("all_games")
         sort_label = self.cmb_sort.currentText()
         threshold_text = self._threshold_label()
-        only_susp = "on" if self.chk_only_susp.isChecked() else "off"
-        only_exact = "on" if self.chk_only_exact.isChecked() else "off"
+        only_susp = t("toggle_on") if self.chk_only_susp.isChecked() else t("toggle_off")
+        only_exact = t("toggle_on") if self.chk_only_exact.isChecked() else t("toggle_off")
 
         def write_csv(to_path: str):
-            with open(to_path, "w", newline="", encoding="cp1251", errors="replace") as f:
-                if self.i18n.lang == "ru":
-                    export_title = "Экспорт Steam Achievement Inspector"
-                    exported_label = "Экспортировано"
-                    profile_label = "Профиль"
-                    ui_language_label = "Язык интерфейса"
-                    game_filter_label = "Фильтр игр"
-                    sort_label_name = "Сортировка"
-                    threshold_label = "Порог"
-                    only_suspicious_label = "Фильтр подозрительных"
-                    only_exact_label = "Фильтр одинаковых таймстампов"
-                else:
-                    export_title = "Steam Achievement Inspector export"
-                    exported_label = "Exported"
-                    profile_label = "Profile"
-                    ui_language_label = "UI language"
-                    game_filter_label = "Game filter"
-                    sort_label_name = "Sort"
-                    threshold_label = "Threshold"
-                    only_suspicious_label = "Only suspicious filter"
-                    only_exact_label = "Only exact filter"
+            items = self._filtered_sorted()
+            source_items = self._base_items()
+            delta_by_id = self._delta_map_ascending(source_items)
+            exact_count: Dict[int, int] = {}
+            for a in source_items:
+                if a.unlock_time:
+                    exact_count[a.unlock_time] = exact_count.get(a.unlock_time, 0) + 1
 
-                f.write("sep=;\n")
+            n_sec_threshold = self.spin_n.value() * 60
+            dash = t("dash")
+
+            with open(to_path, "w", newline="", encoding="utf-16", errors="strict") as f:
+                export_title = t("export_title")
+                exported_label = t("exported")
+                profile_label = t("profile")
+                ui_language_label = t("ui_language")
+                game_filter_label = t("game_filter")
+                sort_label_name = t("sort_label")
+                threshold_label = t("threshold")
+                only_suspicious_label = t("only_suspicious_filter")
+                only_exact_label = t("only_exact_filter")
+
                 f.write(f"# {self._csv_text(export_title)}\n")
                 f.write(f"# {self._csv_text(exported_label)}: {self._csv_text(exported_at)}\n")
                 f.write(f"# {self._csv_text(profile_label)}: {self._csv_text(self.current_profile_url)}\n")
@@ -1364,7 +1377,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 f.write(f"# {self._csv_text(only_suspicious_label)}: {self._csv_text(only_susp)}\n")
                 f.write(f"# {self._csv_text(only_exact_label)}: {self._csv_text(only_exact)}\n")
 
-                w = csv.writer(f, delimiter=";")
+                w = csv.writer(f, delimiter="\t", lineterminator="\n")
                 w.writerow([
                     self._csv_text(t("hdr_game")),
                     self._csv_text(t("hdr_ach")),
@@ -1373,18 +1386,27 @@ class MainWindow(QtWidgets.QMainWindow):
                     self._csv_text(t("export_hdr_delta")),
                     self._csv_text(t("hdr_suspicious")),
                 ])
-                for r in range(self.table.rowCount()):
-                    def cell_text(c):
-                        it = self.table.item(r, c)
-                        return it.text() if it else ""
+
+                for a in items:
+                    dt = a.unlock_dt()
+                    ts_str = dt.strftime("%Y-%m-%d %H:%M:%S") if dt else dash
+                    d = delta_by_id.get(id(a))
+                    if d is None or not a.unlock_time:
+                        delta_str = dash
+                        delta_ok = False
+                    else:
+                        delta_str = self._format_delta_seconds(d, dash=dash)
+                        delta_ok = d <= max(1, n_sec_threshold)
+                    is_exact_dup = bool(a.unlock_time and exact_count.get(a.unlock_time, 0) >= 2)
+                    suspicious = is_exact_dup or (delta_str != dash and delta_ok)
 
                     w.writerow([
-                        self._csv_text(cell_text(1)),
-                        self._csv_text(cell_text(2)),
-                        self._csv_text(cell_text(3)),
-                        self._csv_text(cell_text(4)),
-                        self._csv_delta_text(cell_text(5)),
-                        (self._csv_text(t("susp_yes")) if cell_text(6) else ""),
+                        self._csv_text(a.game_name),
+                        self._csv_text(self._achievement_display_name(a)),
+                        self._csv_text(self._achievement_display_description(a)),
+                        self._csv_text(ts_str),
+                        self._csv_delta_text(delta_str),
+                        self._csv_text(t("susp_yes")) if suspicious else "",
                     ])
 
         try:
