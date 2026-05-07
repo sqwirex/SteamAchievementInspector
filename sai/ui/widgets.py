@@ -66,24 +66,63 @@ class QuietTable(QtWidgets.QTableWidget):
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         super().paintEvent(event)
-        self._erase_trailing_gridline()
+        self._paint_trailing_table_area()
+        self._paint_column_separators()
 
-    def _erase_trailing_gridline(self) -> None:
-        scrollbar = self.verticalScrollBar()
-        if not scrollbar.isVisible() or self.columnCount() <= 0:
+    def _paint_column_separators(self) -> None:
+        if self.columnCount() <= 1 or self.rowCount() <= 0:
+            return
+
+        viewport = self.viewport()
+
+        last_visible_row = -1
+        for row in range(self.rowCount() - 1, -1, -1):
+            if not self.isRowHidden(row):
+                last_visible_row = row
+                break
+        if last_visible_row < 0:
+            return
+
+        top = max(0, self.rowViewportPosition(0))
+        bottom = self.rowViewportPosition(last_visible_row) + self.rowHeight(last_visible_row) - 1
+        bottom = min(bottom, viewport.height() - 1)
+        if bottom < top:
+            return
+
+        painter = QtGui.QPainter(viewport)
+        painter.setPen(QtGui.QPen(QtGui.QColor('#243142'), 1))
+
+        for col in range(self.columnCount() - 1):
+            if self.isColumnHidden(col):
+                continue
+            x = self.columnViewportPosition(col) + self.columnWidth(col) - 1
+            if -1 <= x <= viewport.width() + 1:
+                line_x = x + 0.5
+                painter.drawLine(
+                    QtCore.QPointF(line_x, float(top)),
+                    QtCore.QPointF(line_x, float(bottom)),
+                )
+        painter.end()
+
+    def _paint_trailing_table_area(self) -> None:
+        if self.columnCount() <= 0 or self.rowCount() <= 0:
             return
 
         last_col = self.columnCount() - 1
-        x = self.columnViewportPosition(last_col) + self.columnWidth(last_col) - 1
         viewport = self.viewport()
-        if x < 0 or x >= viewport.width():
+        table_right = self.columnViewportPosition(last_col) + self.columnWidth(last_col)
+        gap = viewport.width() - table_right
+        if gap <= 0:
             return
+
+        x = max(0, table_right)
 
         painter = QtGui.QPainter(viewport)
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
 
         base_color = QtGui.QColor('#111822')
         alt_color = QtGui.QColor('#141d29')
+        grid_color = QtGui.QColor('#243142')
 
         visible_bottom = viewport.height()
 
@@ -101,8 +140,12 @@ class QuietTable(QtWidgets.QTableWidget):
             if height <= 1:
                 continue
 
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
             painter.setBrush(alt_color if (self.alternatingRowColors() and row % 2 == 1) else base_color)
-            painter.drawRect(x, top, 1, height - 1)
+            painter.drawRect(x, top, gap, height - 1)
+
+            painter.setPen(QtGui.QPen(grid_color, 1))
+            painter.drawLine(x, bottom - 1, viewport.width(), bottom - 1)
 
     def _clear_current(self):
         with suppress(Exception):
@@ -111,7 +154,50 @@ class QuietTable(QtWidgets.QTableWidget):
         self.clearFocus()
 
 
-class ContextMenuLineEdit(QtWidgets.QLineEdit):
+class CopyablePasswordLineEditMixin:
+    def _selected_range(self) -> tuple[int, int]:
+        start = self.selectionStart()
+        selected = self.selectedText()
+        if start < 0 or not selected:
+            return -1, 0
+        return start, len(selected)
+
+    def _copy_real_selection(self) -> bool:
+        start, length = self._selected_range()
+        if start < 0 or length <= 0:
+            return False
+        QtWidgets.QApplication.clipboard().setText(self.text()[start:start + length])
+        return True
+
+    def _cut_real_selection(self) -> bool:
+        if self.isReadOnly():
+            return False
+        if not self._copy_real_selection():
+            return False
+        self.del_()
+        return True
+
+    def copy(self) -> None:
+        if not self._copy_real_selection():
+            super().copy()
+
+    def cut(self) -> None:
+        if not self._cut_real_selection():
+            super().cut()
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.matches(QtGui.QKeySequence.StandardKey.Copy):
+            if self._copy_real_selection():
+                event.accept()
+                return
+        if event.matches(QtGui.QKeySequence.StandardKey.Cut):
+            if self._cut_real_selection():
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+
+class ContextMenuLineEdit(CopyablePasswordLineEditMixin, QtWidgets.QLineEdit):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._context_menu_popup: Optional[CustomTextContextMenu] = None
@@ -122,7 +208,7 @@ class ContextMenuLineEdit(QtWidgets.QLineEdit):
         event.accept()
 
 
-class StyledClearLineEdit(QtWidgets.QLineEdit):
+class StyledClearLineEdit(CopyablePasswordLineEditMixin, QtWidgets.QLineEdit):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._context_menu_popup: Optional[CustomTextContextMenu] = None

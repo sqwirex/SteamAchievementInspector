@@ -106,7 +106,10 @@ class ContextMenuRow(QtWidgets.QFrame):
     def __init__(self, title: str, shortcut: str = "", enabled: bool = True, parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
         self.setObjectName("ContextMenuRow")
+        self.setProperty("hovered", False)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_Hover, True)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor if enabled else QtCore.Qt.CursorShape.ArrowCursor)
         self.setEnabled(enabled)
 
@@ -125,9 +128,43 @@ class ContextMenuRow(QtWidgets.QFrame):
         self.shortcut_label.setStyleSheet(f"color: {active_color}; background: transparent;")
         self.title_label.setEnabled(enabled)
         self.shortcut_label.setEnabled(enabled)
+        self.title_label.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.shortcut_label.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
         layout.addWidget(self.title_label, 1)
         layout.addWidget(self.shortcut_label)
+
+    def set_hovered(self, hovered: bool) -> None:
+        hovered = bool(hovered and self.isEnabled())
+        if self.property("hovered") == hovered:
+            return
+        self.setProperty("hovered", hovered)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
+
+    def _notify_menu_hover(self) -> None:
+        menu = self.window()
+        if hasattr(menu, "_set_hovered_row"):
+            menu._set_hovered_row(self if self.isEnabled() else None)
+        else:
+            self.set_hovered(True)
+
+    def enterEvent(self, event: QtCore.QEvent) -> None:
+        self._notify_menu_hover()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QtCore.QEvent) -> None:
+        menu = self.window()
+        if hasattr(menu, "_sync_hovered_from_cursor"):
+            menu._sync_hovered_from_cursor()
+        else:
+            self.set_hovered(False)
+        super().leaveEvent(event)
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        self._notify_menu_hover()
+        super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         if self.isEnabled() and event.button() == QtCore.Qt.MouseButton.LeftButton:
@@ -160,6 +197,11 @@ class CustomTextContextMenu(QtWidgets.QWidget):
         self.layout_.setContentsMargins(8, 8, 8, 8)
         self.layout_.setSpacing(4)
 
+        self._rows: list[ContextMenuRow] = []
+        self._hovered_row: Optional[ContextMenuRow] = None
+        self.setMouseTracking(True)
+        self.panel.setMouseTracking(True)
+
         self.setStyleSheet(
             """
             QWidget#CustomTextContextMenu {
@@ -175,7 +217,7 @@ class CustomTextContextMenu(QtWidgets.QWidget):
                 border: none;
                 border-radius: 10px;
             }
-            QFrame#ContextMenuRow:hover {
+            QFrame#ContextMenuRow[hovered="true"] {
                 background: #223145;
             }
             QFrame#ContextMenuRow:disabled {
@@ -190,28 +232,92 @@ class CustomTextContextMenu(QtWidgets.QWidget):
             QFrame#ContextMenuRow:disabled QLabel#ContextMenuRowShortcut {
                 color: #607286;
             }
-            QFrame#ContextMenuRow:hover QLabel#ContextMenuRowTitle,
-            QFrame#ContextMenuRow:hover QLabel#ContextMenuRowShortcut {
+            QFrame#ContextMenuRow[hovered="true"] QLabel#ContextMenuRowTitle,
+            QFrame#ContextMenuRow[hovered="true"] QLabel#ContextMenuRowShortcut {
                 color: #ffffff;
             }
             """
         )
 
+    def _selected_range(self) -> tuple[int, int]:
+        start = self.target.selectionStart()
+        text = self.target.selectedText()
+        if start < 0 or not text:
+            return -1, 0
+        return start, len(text)
+
+    def _copy_selected_text(self) -> None:
+        start, length = self._selected_range()
+        if start >= 0 and length > 0:
+            QtWidgets.QApplication.clipboard().setText(self.target.text()[start:start + length])
+
+    def _cut_selected_text(self) -> None:
+        if self.target.isReadOnly():
+            return
+        self._copy_selected_text()
+        self.target.del_()
+
+    def _clear_actions(self) -> None:
+        self._hovered_row = None
+        self._rows.clear()
+        while self.layout_.count():
+            item = self.layout_.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.deleteLater()
+
+    def _set_hovered_row(self, row: Optional[ContextMenuRow]) -> None:
+        if row is not None and (row not in self._rows or not row.isEnabled()):
+            row = None
+        if row is self._hovered_row:
+            return
+        old_row = self._hovered_row
+        self._hovered_row = row
+        if old_row is not None:
+            old_row.set_hovered(False)
+        if row is not None:
+            row.set_hovered(True)
+
+    def _sync_hovered_from_cursor(self) -> None:
+        global_pos = QtGui.QCursor.pos()
+        hovered = None
+        for row in self._rows:
+            local_pos = row.mapFromGlobal(global_pos)
+            if row.isVisible() and row.isEnabled() and row.rect().contains(local_pos):
+                hovered = row
+                break
+        self._set_hovered_row(hovered)
+
     def _add_action(self, title: str, shortcut: str, enabled: bool, callback: Callable[[], None]):
         row = ContextMenuRow(title, shortcut, enabled, self.panel)
         if enabled:
             row.triggered.connect(lambda cb=callback: (cb(), self.hide()))
+        self._rows.append(row)
         self.layout_.addWidget(row)
 
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        self._sync_hovered_from_cursor()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event: QtCore.QEvent) -> None:
+        self._sync_hovered_from_cursor()
+        super().leaveEvent(event)
+
+    def hideEvent(self, event: QtGui.QHideEvent) -> None:
+        self._set_hovered_row(None)
+        super().hideEvent(event)
+
     def popup(self, global_pos: QtCore.QPoint):
+        self._clear_actions()
         clipboard = QtWidgets.QApplication.clipboard().text()
         has_selection = bool(self.target.selectedText())
         read_only = self.target.isReadOnly()
 
         self._add_action("Undo", "Ctrl+Z", (not read_only) and self.target.isUndoAvailable(), self.target.undo)
         self._add_action("Redo", "Ctrl+Y", (not read_only) and self.target.isRedoAvailable(), self.target.redo)
-        self._add_action("Cut", "Ctrl+X", (not read_only) and has_selection, self.target.cut)
-        self._add_action("Copy", "Ctrl+C", has_selection, self.target.copy)
+        self._add_action("Cut", "Ctrl+X", (not read_only) and has_selection, self._cut_selected_text)
+        self._add_action("Copy", "Ctrl+C", has_selection, self._copy_selected_text)
         self._add_action("Paste", "Ctrl+V", (not read_only) and bool(clipboard), self.target.paste)
         self._add_action("Delete", "Del", (not read_only) and has_selection, self.target.del_)
         self._add_action("Select All", "Ctrl+A", bool(self.target.text()), self.target.selectAll)
@@ -228,6 +334,7 @@ class CustomTextContextMenu(QtWidgets.QWidget):
         self.move(pos)
         self.show()
         self.raise_()
+        QtCore.QTimer.singleShot(0, self._sync_hovered_from_cursor)
 
 
 class ThemedMessageDialog(QtWidgets.QWidget):

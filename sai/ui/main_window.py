@@ -258,7 +258,7 @@ class MainWindow(QtWidgets.QMainWindow):
         table_card = QtWidgets.QFrame()
         table_card.setObjectName("TableCard")
         table_l = QtWidgets.QVBoxLayout(table_card)
-        table_l.setContentsMargins(1, 0, 1, 1)
+        table_l.setContentsMargins(0, 0, 0, 0)
         table_l.setSpacing(0)
 
         self.table = QuietTable(0, 7)
@@ -274,7 +274,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.setIconSize(QtCore.QSize(34, 34))
         self.table.setAlternatingRowColors(True)
-        self.table.setShowGrid(True)
+        self.table.setShowGrid(False)
         self.table.setGridStyle(QtCore.Qt.PenStyle.SolidLine)
         self.table.setWordWrap(False)
         self.table.setMouseTracking(True)
@@ -285,6 +285,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table.viewport().installEventFilter(self)
         self.table.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         self.table.setHorizontalHeader(OffsetHeaderView(QtCore.Qt.Orientation.Horizontal, self.table))
         hh = self.table.horizontalHeader()
@@ -321,8 +322,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table_scroll_header.setPalette(pal)
         self.table_scroll_header.hide()
         self.table.verticalScrollBar().rangeChanged.connect(lambda *_: (self._apply_compact_table_columns(), self._update_table_scroll_header()))
-        self.table.horizontalHeader().geometriesChanged.connect(self._update_table_scroll_header)
-        self.table.horizontalScrollBar().rangeChanged.connect(lambda *_: self._update_table_scroll_header())
+        self.table.horizontalHeader().geometriesChanged.connect(self._refresh_table_geometry)
+        self.table.horizontalScrollBar().rangeChanged.connect(lambda *_: self._refresh_table_geometry())
 
         page.addWidget(table_card, 1)
 
@@ -577,7 +578,7 @@ class MainWindow(QtWidgets.QMainWindow):
             }
             QFrame#TableScrollHeader {
                 background: #1d2836;
-                border-left: 2px solid #2b3849;
+                border-left: 1px solid #2b3849;
                 border-right: 0px;
                 border-bottom: 1px solid #2b3849;
                 border-top: 0px;
@@ -678,9 +679,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
         viewport_width = self.table.viewport().width()
         total_base = sum(base_widths)
+        vbar = self.table.verticalScrollBar()
+        has_vertical_scroll = self.table.rowCount() > 0 and vbar.maximum() > 0
+        desired_policy = (
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            if has_vertical_scroll
+            else QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        if self.table.verticalScrollBarPolicy() != desired_policy:
+            self.table.setVerticalScrollBarPolicy(desired_policy)
+            viewport_width = self.table.viewport().width()
 
         if viewport_width >= total_base:
-            hh.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+            hh.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Fixed)
+            self.table.setColumnWidth(3, base_widths[3] + (viewport_width - total_base))
         else:
             hh.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(3, base_widths[3])
@@ -857,6 +869,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_fetch.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.progress.setValue(0)
+        self._set_status("preparing_load")
         self.achievements.clear()
         self.loaded_games = 0
         self.games_index.clear()
@@ -1029,7 +1042,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.refresh_table(update_status=False)
 
-        self.progress.setValue(100 if completed or stopped else pct)
+        if completed:
+            self.progress.setValue(100)
+        elif stopped and self._stopped_during_game_list_loading:
+            self.progress.setValue(0)
+        else:
+            self.progress.setValue(pct)
 
         if stopped:
             if self._stopped_during_game_list_loading:
@@ -1206,7 +1224,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.table.setItem(row, 6, flag_item)
 
         self.table.resizeRowsToContents()
+        self._apply_compact_table_columns()
         self.table.setUpdatesEnabled(True)
+        QtCore.QTimer.singleShot(0, self._refresh_table_geometry)
         if self.icons_enabled:
             self._queue_missing_icons()
             self._kick_icon_prefetch()
@@ -1350,8 +1370,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     self._csv_text(t("hdr_ach")),
                     self._csv_text(t("hdr_desc")),
                     self._csv_text(t("hdr_time")),
-                    "Delta t",
-                    "Suspicious",
+                    self._csv_text(t("export_hdr_delta")),
+                    self._csv_text(t("hdr_suspicious")),
                 ])
                 for r in range(self.table.rowCount()):
                     def cell_text(c):

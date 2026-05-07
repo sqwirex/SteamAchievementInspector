@@ -3,7 +3,72 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from .utils import compact_elide
 
 
+
+
+def draw_warning_icon(
+    painter: QtGui.QPainter,
+    rect: QtCore.QRectF,
+    *,
+    icon_size: float = 13.0,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
+) -> None:
+    painter.save()
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing, True)
+
+    cx = rect.center().x() + offset_x
+    cy = rect.center().y() + offset_y
+    half = icon_size / 2.0
+    h = icon_size * 0.88
+
+    top = QtCore.QPointF(cx, cy - h / 2.0)
+    left = QtCore.QPointF(cx - half, cy + h / 2.0)
+    right = QtCore.QPointF(cx + half, cy + h / 2.0)
+
+    triangle = QtGui.QPainterPath()
+    triangle.moveTo(top)
+    triangle.lineTo(left)
+    triangle.lineTo(right)
+    triangle.closeSubpath()
+
+    painter.setPen(QtCore.Qt.PenStyle.NoPen)
+    painter.setBrush(QtGui.QColor("#f59f00"))
+    painter.drawPath(triangle)
+
+    mark_color = QtGui.QColor("#111822")
+    painter.setBrush(mark_color)
+
+    bar_w = max(1.6, icon_size * 0.11)
+    bar_h = icon_size * 0.34
+    bar_rect = QtCore.QRectF(
+        cx - bar_w / 2.0,
+        cy - icon_size * 0.12,
+        bar_w,
+        bar_h,
+    )
+    painter.drawRoundedRect(bar_rect, 0.8, 0.8)
+
+    dot_r = max(1.05, icon_size * 0.07)
+    painter.drawEllipse(QtCore.QPointF(cx, cy + icon_size * 0.23), dot_r, dot_r)
+    painter.restore()
+
+
 class NoHighlightDelegate(QtWidgets.QStyledItemDelegate):
+
+    def _draw_table_grid(self, painter: QtGui.QPainter, option: QtWidgets.QStyleOptionViewItem, index: QtCore.QModelIndex) -> None:
+        table = option.widget
+        if not isinstance(table, QtWidgets.QTableWidget):
+            return
+
+        painter.save()
+        painter.setPen(QtGui.QPen(QtGui.QColor("#243142"), 1))
+
+        rect = option.rect
+
+        painter.drawLine(rect.left(), rect.bottom(), rect.right() + 1, rect.bottom())
+        painter.restore()
+
     def paint(self, painter: QtGui.QPainter, option: QtWidgets.QStyleOptionViewItem, index: QtCore.QModelIndex):
         opt = QtWidgets.QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
@@ -30,6 +95,7 @@ class NoHighlightDelegate(QtWidgets.QStyledItemDelegate):
                 x = opt.rect.x() + (opt.rect.width() - pix.width()) / 2.0 + 4.75
                 y = opt.rect.y() + (opt.rect.height() - pix.height()) / 2.0 + 5.0
                 painter.drawPixmap(QtCore.QPointF(x, y), pix)
+            self._draw_table_grid(painter, opt, index)
             return
 
         opt.text = ""
@@ -39,23 +105,14 @@ class NoHighlightDelegate(QtWidgets.QStyledItemDelegate):
 
         if index.column() == 6:
             if text:
-                painter.save()
-
-                warning_font = QtGui.QFont(opt.font)
-                warning_font.setBold(True)
-                warning_font.setWeight(800)
-
-                painter.setFont(warning_font)
-                painter.setPen(QtGui.QColor("#f59f00"))
-
-                fm = QtGui.QFontMetrics(warning_font)
-                br = fm.tightBoundingRect(text)
-
-                x = opt.rect.x() + (opt.rect.width() - br.width()) / 2.0 - br.x() + 1.5
-                y = opt.rect.y() + (opt.rect.height() + br.height()) / 2.0 - br.bottom()
-
-                painter.drawText(QtCore.QPointF(x, y), text)
-                painter.restore()
+                draw_warning_icon(
+                    painter,
+                    QtCore.QRectF(opt.rect),
+                    icon_size=13.0,
+                    offset_x=0.5,
+                    offset_y=-1.0,
+                )
+            self._draw_table_grid(painter, opt, index)
             return
 
         alignment_data = index.data(QtCore.Qt.ItemDataRole.TextAlignmentRole)
@@ -74,6 +131,7 @@ class NoHighlightDelegate(QtWidgets.QStyledItemDelegate):
         painter.setPen(QtGui.QColor("#dce8f3"))
         painter.drawText(text_rect, int(alignment), shown)
         painter.restore()
+        self._draw_table_grid(painter, opt, index)
 
 
 
@@ -97,6 +155,15 @@ class OffsetHeaderView(QtWidgets.QHeaderView):
         y = rect.y() + (rect.height() + br.height()) / 2.0 - br.bottom()
         painter.drawText(QtCore.QPointF(x, y), text)
         painter.restore()
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        super().paintEvent(event)
+
+        painter = QtGui.QPainter(self.viewport())
+        painter.setPen(QtGui.QPen(QtGui.QColor("#2b3849"), 1))
+        y = self.viewport().height() - 0.5
+        painter.drawLine(QtCore.QPointF(-1.0, y), QtCore.QPointF(self.viewport().width() + 1.0, y))
+        painter.end()
 
     def paintSection(self, painter: QtGui.QPainter, rect: QtCore.QRect, logicalIndex: int):
         if not rect.isValid():
@@ -135,12 +202,10 @@ class OffsetHeaderView(QtWidgets.QHeaderView):
                 if not vbar.isVisible() or vbar.maximum() <= 0:
                     extra_x += 0.5
 
-            self._draw_centered_header_text(
+            draw_warning_icon(
                 painter,
                 QtCore.QRectF(rect).translated(extra_x, -0.5),
-                "⚠",
-                QtGui.QColor("#f59f00"),
-                header_font,
+                icon_size=12.5,
             )
         else:
             self._draw_centered_header_text(
