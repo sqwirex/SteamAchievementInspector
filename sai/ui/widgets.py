@@ -8,7 +8,7 @@ from .popups import CellPreviewPopup, CustomTextContextMenu
 from .utils import compact_elide, table_item_text_width
 
 
-class QuietTable(QtWidgets.QTableWidget):
+class QuietTable(QtWidgets.QTableView):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._preview_popup = CellPreviewPopup()
@@ -21,13 +21,13 @@ class QuietTable(QtWidgets.QTableWidget):
     def _item_needs_preview(self, index: QtCore.QModelIndex) -> bool:
         if not index.isValid() or index.column() not in (1, 2, 3, 4, 5):
             return False
-        item = self.item(index.row(), index.column())
-        if not item:
-            return False
-        text = item.text().strip()
+        text = str(index.data(QtCore.Qt.ItemDataRole.DisplayRole) or "").strip()
         if not text:
             return False
-        fm = QtGui.QFontMetrics(item.font())
+        font = index.data(QtCore.Qt.ItemDataRole.FontRole)
+        if not isinstance(font, QtGui.QFont):
+            font = self.font()
+        fm = QtGui.QFontMetrics(font)
         shown = compact_elide(text, fm, table_item_text_width(self, index))
         return shown != text
 
@@ -39,8 +39,7 @@ class QuietTable(QtWidgets.QTableWidget):
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         index = self.indexAt(event.pos())
         if self._item_needs_preview(index):
-            item = self.item(index.row(), index.column())
-            text = item.text().strip()
+            text = str(index.data(QtCore.Qt.ItemDataRole.DisplayRole) or "").strip()
             key = (index.row(), index.column(), text)
             if key != self._last_preview_key:
                 self._last_preview_key = key
@@ -56,8 +55,7 @@ class QuietTable(QtWidgets.QTableWidget):
             if self.viewport().rect().contains(pos):
                 index = self.indexAt(pos)
                 if index.isValid():
-                    item = self.item(index.row(), index.column())
-                    text = item.text().strip() if item else ""
+                    text = str(index.data(QtCore.Qt.ItemDataRole.DisplayRole) or "").strip()
                     if (index.row(), index.column(), text) == self._last_preview_key:
                         super().leaveEvent(event)
                         return
@@ -68,6 +66,14 @@ class QuietTable(QtWidgets.QTableWidget):
         super().paintEvent(event)
         self._paint_trailing_table_area()
         self._paint_column_separators()
+
+    def rowCount(self) -> int:
+        model = self.model()
+        return model.rowCount() if model is not None else 0
+
+    def columnCount(self) -> int:
+        model = self.model()
+        return model.columnCount() if model is not None else 0
 
     def _paint_column_separators(self) -> None:
         if self.columnCount() <= 1 or self.rowCount() <= 0:

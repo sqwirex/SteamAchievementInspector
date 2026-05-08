@@ -47,9 +47,9 @@ class CapsuleScrollBar(QtWidgets.QScrollBar):
         rect = QtCore.QRectF(self.rect())
 
         if self._is_vertical():
-            return rect.adjusted(5.0, self._reserved_start + 2, -4.0, -2)
+            return rect.adjusted(4.9, self._reserved_start + 2, -4.1, -2)
 
-        return rect.adjusted(2, 5.0, -2, -4.0)
+        return rect.adjusted(2, 4.75, -2, -4.25)
 
     def _slider_rect(self) -> QtCore.QRectF:
         track = self._track_rect()

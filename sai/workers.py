@@ -5,7 +5,22 @@ from PyQt6 import QtCore
 
 from .i18n import I18n
 from .models import Achievement
+from .cache import read_schema, read_schema_any, write_schema
 from .steam_api import InvalidAPIKeyError, SteamAPI
+
+
+SCHEMA_STALE_REFRESH_LIMIT = 50
+_schema_refresh_lock = threading.Lock()
+_schema_stale_refreshes = 0
+
+
+def _reserve_stale_schema_refresh() -> bool:
+    global _schema_stale_refreshes
+    with _schema_refresh_lock:
+        if _schema_stale_refreshes >= SCHEMA_STALE_REFRESH_LIMIT:
+            return False
+        _schema_stale_refreshes += 1
+        return True
 
 
 class ListGamesWorker(QtCore.QRunnable):
@@ -68,10 +83,18 @@ class GameFetchWorker(QtCore.QRunnable):
             pa = api.get_player_achievements_full(self.steamid64, appid)
             achs: List[Achievement] = []
             if pa:
-                try:
-                    schema = api.get_schema_for_game(appid)
-                except Exception:
-                    schema = {}
+                schema = read_schema(appid)
+                if schema is None:
+                    stale_schema = read_schema_any(appid)
+                    should_refresh = stale_schema is None or _reserve_stale_schema_refresh()
+                    if should_refresh:
+                        try:
+                            schema = api.get_schema_for_game(appid)
+                            write_schema(appid, schema)
+                        except Exception:
+                            schema = stale_schema or {}
+                    else:
+                        schema = stale_schema or {}
 
                 for a in pa:
                     apiname = a["apiname"]

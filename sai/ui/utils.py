@@ -18,7 +18,7 @@ def compact_elide(text: str, font_metrics: QtGui.QFontMetrics, width: int) -> st
     return (trimmed or "") + ellipsis
 
 
-def table_item_text_width(table: QtWidgets.QTableWidget, index: QtCore.QModelIndex) -> int:
+def table_item_text_width(table: QtWidgets.QTableView, index: QtCore.QModelIndex) -> int:
     if not index.isValid():
         return 0
     rect = table.visualRect(index)

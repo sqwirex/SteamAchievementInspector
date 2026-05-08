@@ -68,7 +68,7 @@ class NoHighlightDelegate(QtWidgets.QStyledItemDelegate):
 
     def _draw_table_grid(self, painter: QtGui.QPainter, option: QtWidgets.QStyleOptionViewItem, index: QtCore.QModelIndex) -> None:
         table = option.widget
-        if not isinstance(table, QtWidgets.QTableWidget):
+        if not isinstance(table, QtWidgets.QAbstractItemView):
             return
 
         painter.save()
