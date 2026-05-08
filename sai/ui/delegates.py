@@ -3,6 +3,16 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from .utils import compact_elide
 
 
+def centered_icon_rect(rect: QtCore.QRect, size: QtCore.QSize) -> QtCore.QRect:
+    if not size.isValid() or size.width() <= 0 or size.height() <= 0:
+        size = QtCore.QSize(34, 34)
+
+    width = min(size.width(), max(0, rect.width()))
+    height = min(size.height(), max(0, rect.height()))
+    x = rect.x() + (rect.width() - width) // 2
+    y = rect.y() + (rect.height() - height) // 2
+    return QtCore.QRect(x, y, width, height)
+
 
 
 def draw_warning_icon(
@@ -87,14 +97,14 @@ class NoHighlightDelegate(QtWidgets.QStyledItemDelegate):
             style.drawControl(QtWidgets.QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
 
             if isinstance(icon, QtGui.QIcon) and not icon.isNull():
-                icon_size = opt.decorationSize
-                if not icon_size.isValid() or icon_size.width() <= 0 or icon_size.height() <= 0:
-                    icon_size = QtCore.QSize(34, 34)
-
-                pix = icon.pixmap(icon_size)
-                x = opt.rect.x() + (opt.rect.width() - pix.width()) / 2.0 + 4.75
-                y = opt.rect.y() + (opt.rect.height() - pix.height()) / 2.0 + 5.0
-                painter.drawPixmap(QtCore.QPointF(x, y), pix)
+                icon_rect = centered_icon_rect(opt.rect, opt.decorationSize)
+                icon.paint(
+                    painter,
+                    icon_rect,
+                    QtCore.Qt.AlignmentFlag.AlignCenter,
+                    QtGui.QIcon.Mode.Normal,
+                    QtGui.QIcon.State.Off,
+                )
             self._draw_table_grid(painter, opt, index)
             return
 
@@ -109,8 +119,6 @@ class NoHighlightDelegate(QtWidgets.QStyledItemDelegate):
                     painter,
                     QtCore.QRectF(opt.rect),
                     icon_size=13.0,
-                    offset_x=0.5,
-                    offset_y=-1.0,
                 )
             self._draw_table_grid(painter, opt, index)
             return
@@ -195,16 +203,9 @@ class OffsetHeaderView(QtWidgets.QHeaderView):
         header_font.setWeight(800)
 
         if logicalIndex == 6:
-            extra_x = 0.5
-            table = self.parentWidget()
-            if isinstance(table, QtWidgets.QAbstractItemView):
-                vbar = table.verticalScrollBar()
-                if not vbar.isVisible() or vbar.maximum() <= 0:
-                    extra_x += 0.5
-
             draw_warning_icon(
                 painter,
-                QtCore.QRectF(rect).translated(extra_x, -0.5),
+                QtCore.QRectF(rect),
                 icon_size=12.5,
             )
         else:
