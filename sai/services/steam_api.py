@@ -4,7 +4,7 @@ from typing import Dict, List
 
 import requests
 
-from .config import API_BASE, HEADERS
+from sai.core.config import API_BASE, HEADERS
 
 
 STEAM_API_LANGUAGE = "en"

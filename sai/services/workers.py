@@ -3,10 +3,10 @@ from typing import Dict, List
 
 from PyQt6 import QtCore
 
-from .i18n import I18n
-from .models import Achievement
-from .cache import read_schema, read_schema_any, write_schema
-from .steam_api import InvalidAPIKeyError, SteamAPI
+from sai.core.i18n import I18n
+from sai.core.models import Achievement
+from sai.storage.cache import read_schema, read_schema_any, write_schema
+from sai.services.steam_api import InvalidAPIKeyError, SteamAPI
 
 
 SCHEMA_STALE_REFRESH_LIMIT = 50

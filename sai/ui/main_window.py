@@ -9,12 +9,12 @@ from typing import Deque, Dict, List, Optional, Set
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
-from sai.i18n import I18n
-from sai.cache import cache_size_bytes, clear_cache, cleanup_cache, read_icon_bytes, read_user_achievements, write_icon_bytes, write_user_achievements
-from sai.models import Achievement
-from sai.paths import app_exports_dir, resource_path
-from sai.steam_api import SteamAPI
-from sai.workers import GameFetchWorker, ListGamesWorker
+from sai.core.i18n import I18n
+from sai.storage.cache import cache_size_bytes, clear_cache, cleanup_cache, read_icon_bytes, read_user_achievements, write_icon_bytes, write_user_achievements
+from sai.core.models import Achievement
+from sai.core.paths import app_exports_dir, resource_path
+from sai.services.steam_api import SteamAPI
+from sai.services.workers import GameFetchWorker, ListGamesWorker
 from sai.ui.delegates import NoHighlightDelegate, OffsetHeaderView
 from sai.ui.popups import ThemedMessageDialog
 from sai.ui.scrollbars import CapsuleScrollBar

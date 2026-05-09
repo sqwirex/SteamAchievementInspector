@@ -6,8 +6,8 @@ import tempfile
 import time
 from typing import Dict, Iterable, List, Optional
 
-from .models import Achievement
-from .paths import app_cache_dir
+from sai.core.models import Achievement
+from sai.core.paths import app_cache_dir
 
 SCHEMA_MAX_AGE_DAYS = 30
 ICON_MAX_AGE_DAYS = 180
