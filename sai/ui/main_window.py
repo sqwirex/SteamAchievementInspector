@@ -1484,7 +1484,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._export_blocked_until_ready = False
         self._loading_game_list = False
         self.btn_fetch.setEnabled(True)
-        self.btn_stop.setEnabled(False)
+        self.btn_stop.setEnabled(True)
 
         done = min(self.loaded_games, self.total_games) if self.total_games else 0
         pct = int(100 * done / max(1, self.total_games))
