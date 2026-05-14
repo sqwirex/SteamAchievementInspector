@@ -161,6 +161,15 @@ class QuietTable(QtWidgets.QTableView):
 
 
 class CopyablePasswordLineEditMixin:
+    def focusInEvent(self, event: QtGui.QFocusEvent) -> None:
+        super().focusInEvent(event)
+        if event.reason() in (QtCore.Qt.FocusReason.TabFocusReason, QtCore.Qt.FocusReason.BacktabFocusReason):
+            QtCore.QTimer.singleShot(0, self._place_cursor_after_tab_focus)
+
+    def _place_cursor_after_tab_focus(self) -> None:
+        self.deselect()
+        self.setCursorPosition(len(self.text()))
+
     def _selected_range(self) -> tuple[int, int]:
         start = self.selectionStart()
         selected = self.selectedText()
@@ -263,6 +272,15 @@ class StyledClearLineEdit(CopyablePasswordLineEditMixin, QtWidgets.QLineEdit):
 
 
 class SmartSpinBox(QtWidgets.QSpinBox):
+    def focusInEvent(self, event: QtGui.QFocusEvent) -> None:
+        super().focusInEvent(event)
+        if event.reason() in (QtCore.Qt.FocusReason.TabFocusReason, QtCore.Qt.FocusReason.BacktabFocusReason):
+            QtCore.QTimer.singleShot(0, self._place_cursor_after_tab_focus)
+
+    def _place_cursor_after_tab_focus(self) -> None:
+        self.lineEdit().deselect()
+        self.lineEdit().setCursorPosition(len(self.lineEdit().text()))
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._context_menu_popup: Optional[CustomTextContextMenu] = None
@@ -352,8 +370,41 @@ class SmartSpinBox(QtWidgets.QSpinBox):
         event.accept()
 
 
+class FocusAwareCheckBox(QtWidgets.QCheckBox):
+    def _set_tab_focus(self, value: bool) -> None:
+        self.setProperty("tabFocus", value)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
+
+    def focusInEvent(self, event: QtGui.QFocusEvent) -> None:
+        super().focusInEvent(event)
+        self._set_tab_focus(event.reason() in (QtCore.Qt.FocusReason.TabFocusReason, QtCore.Qt.FocusReason.BacktabFocusReason))
+
+    def focusOutEvent(self, event: QtGui.QFocusEvent) -> None:
+        self._set_tab_focus(False)
+        super().focusOutEvent(event)
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        self._set_tab_focus(False)
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
+            self.toggle()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class CustomComboPopup(QtWidgets.QWidget):
     itemClicked = QtCore.pyqtSignal(int)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        parent = self.parent()
+        if hasattr(parent, "_handle_popup_key") and parent._handle_popup_key(event):
+            return
+        super().keyPressEvent(event)
 
     def hideEvent(self, event: QtGui.QHideEvent) -> None:
         parent = self.parent()
@@ -371,6 +422,7 @@ class CustomComboPopup(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("ComboPopup")
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -477,19 +529,73 @@ class CustomComboBox(QtWidgets.QComboBox):
     def _apply_popup_index(self, row: int):
         if 0 <= row < self.count():
             self.setCurrentIndex(row)
-        self.clearFocus()
+        self.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+
+    def _move_popup_selection(self, delta: int) -> None:
+        count = self._popup.list.count()
+        if count <= 0:
+            return
+        row = self._popup.list.currentRow()
+        if row < 0:
+            row = self.currentIndex()
+        row = max(0, min(count - 1, row + delta))
+        self._popup.list.setCurrentRow(row)
+        item = self._popup.list.item(row)
+        if item is not None:
+            self._popup.list.scrollToItem(item, QtWidgets.QAbstractItemView.ScrollHint.EnsureVisible)
+
+    def _accept_popup_selection(self) -> None:
+        row = self._popup.list.currentRow()
+        if row < 0:
+            row = self.currentIndex()
+        if row >= 0:
+            self._apply_popup_index(row)
+        self.hidePopup()
+        self.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+
+    def _handle_popup_key(self, event: QtGui.QKeyEvent) -> bool:
+        key = event.key()
+        if key == QtCore.Qt.Key.Key_Escape:
+            self.hidePopup()
+            self.clearFocus()
+            event.accept()
+            return True
+        if key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
+            self._accept_popup_selection()
+            event.accept()
+            return True
+        if key in (QtCore.Qt.Key.Key_Up, QtCore.Qt.Key.Key_Down):
+            self._move_popup_selection(-1 if key == QtCore.Qt.Key.Key_Up else 1)
+            event.accept()
+            return True
+        if key in (QtCore.Qt.Key.Key_Home, QtCore.Qt.Key.Key_End):
+            count = self._popup.list.count()
+            if count > 0:
+                row = 0 if key == QtCore.Qt.Key.Key_Home else count - 1
+                self._popup.list.setCurrentRow(row)
+                self._popup.list.scrollToItem(self._popup.list.item(row), QtWidgets.QAbstractItemView.ScrollHint.EnsureVisible)
+            event.accept()
+            return True
+        return False
 
     def hidePopup(self):
         self._popup.hide()
         super().hidePopup()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent):
-        if self._popup.isVisible() and event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
-            row = self._popup.list.currentRow()
-            if row >= 0:
-                self._apply_popup_index(row)
+        key = event.key()
+        if key == QtCore.Qt.Key.Key_Escape:
+            if self._popup.isVisible():
                 self.hidePopup()
-                return
+            self.clearFocus()
+            event.accept()
+            return
+        if self._popup.isVisible() and self._handle_popup_key(event):
+            return
+        if key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
+            self.showPopup()
+            event.accept()
+            return
         super().keyPressEvent(event)
 
     def showPopup(self):
@@ -539,6 +645,7 @@ class CustomComboBox(QtWidgets.QComboBox):
         self._popup.show()
         self._popup.raise_()
         self._popup.activateWindow()
+        self._popup.setFocus(QtCore.Qt.FocusReason.PopupFocusReason)
 
 
 class RoundedProgressBar(QtWidgets.QProgressBar):

@@ -18,7 +18,7 @@ from sai.services.workers import GameFetchWorker, ListGamesWorker
 from sai.ui.delegates import NoHighlightDelegate, OffsetHeaderView
 from sai.ui.popups import ThemedMessageDialog
 from sai.ui.scrollbars import CapsuleScrollBar
-from sai.ui.widgets import CustomComboBox, QuietTable, RoundedProgressBar, SmartSpinBox, StyledClearLineEdit
+from sai.ui.widgets import CustomComboBox, FocusAwareCheckBox, QuietTable, RoundedProgressBar, SmartSpinBox, StyledClearLineEdit
 from sai.ui.table_model import AchievementTableModel
 
 
@@ -231,18 +231,22 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.btn_fetch = QtWidgets.QPushButton()
         self.btn_fetch.setObjectName("PrimaryButton")
+        self.btn_fetch.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.btn_fetch.clicked.connect(self.on_fetch)
 
         self.btn_stop = QtWidgets.QPushButton()
         self.btn_stop.setObjectName("DangerButton")
+        self.btn_stop.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.btn_stop.clicked.connect(self.on_stop)
 
         self.btn_export = QtWidgets.QPushButton()
         self.btn_export.setObjectName("ExportButton")
+        self.btn_export.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.btn_export.clicked.connect(self.export_csv)
 
         self.btn_clear_cache = QtWidgets.QPushButton()
         self.btn_clear_cache.setObjectName("GhostButton")
+        self.btn_clear_cache.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.btn_clear_cache.setMinimumWidth(0)
         self.btn_clear_cache.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
         self.btn_clear_cache.clicked.connect(self.on_clear_cache)
@@ -320,10 +324,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_n_unit = QtWidgets.QLabel()
         self.lbl_n_unit.setObjectName("FieldLabel")
 
-        self.chk_only_susp = QtWidgets.QCheckBox()
+        self.chk_only_susp = FocusAwareCheckBox()
+        self.chk_only_susp.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.chk_only_susp.stateChanged.connect(self.refresh_table)
 
-        self.chk_only_exact = QtWidgets.QCheckBox()
+        self.chk_only_exact = FocusAwareCheckBox()
+        self.chk_only_exact.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.chk_only_exact.stateChanged.connect(self.refresh_table)
 
         self.lbl_filters = QtWidgets.QLabel()
@@ -331,6 +337,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.btn_reset = QtWidgets.QPushButton()
         self.btn_reset.setObjectName("GhostButton")
+        self.btn_reset.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.btn_reset.clicked.connect(self.reset_filters)
 
         filters.addWidget(self.lbl_game, 0, 0)
@@ -376,6 +383,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_toggle_menu = QtWidgets.QToolButton()
         self.btn_toggle_menu.setObjectName("MenuToggleButton")
         self.btn_toggle_menu.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_menu.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.btn_toggle_menu.setArrowType(QtCore.Qt.ArrowType.UpArrow)
         self.btn_toggle_menu.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.btn_toggle_menu.setAutoRaise(False)
@@ -600,9 +608,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 font-weight: 800;
                 color: #eef6fc;
                 background: #202b3a;
+                outline: 0px;
             }
             QPushButton:hover { background: #263448; }
             QPushButton:pressed { background: #182231; }
+            QPushButton:focus {
+                border: 2px solid #f2c94c;
+                padding: 7px 11px;
+                background: #263448;
+            }
             QPushButton:disabled {
                 color: #6f7f8f;
                 background: #151c26;
@@ -618,6 +632,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 border: 1px solid #c99b28;
                 color: #0f0f0f;
             }
+            QPushButton#PrimaryButton:focus {
+                background: #f0c955;
+                border: 2px solid #fff0a6;
+                color: #0f0f0f;
+                padding: 7px 11px;
+            }
             QPushButton#PrimaryButton:pressed {
                 background: #cda231;
                 border: 1px solid #a6780f;
@@ -632,6 +652,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 background: #542733;
                 border: 1px solid #c24a63;
             }
+            QPushButton#DangerButton:focus {
+                background: #542733;
+                border: 2px solid #ff6f87;
+                padding: 7px 11px;
+            }
             QPushButton#GhostButton {
                 background: transparent;
                 color: #c4d1de;
@@ -642,6 +667,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 color: #ffd34d;
                 border-color: #50647d;
             }
+            QPushButton#GhostButton:focus {
+                background: #18212d;
+                color: #ffd34d;
+                border: 2px solid #f2c94c;
+                padding: 7px 11px;
+            }
             QPushButton#ExportButton {
                 background: #183b2d;
                 color: #ecfdf5;
@@ -651,6 +682,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 background: #1f6f4a;
                 color: #ffffff;
                 border-color: #34d399;
+            }
+            QPushButton#ExportButton:focus {
+                background: #1f6f4a;
+                color: #ffffff;
+                border: 2px solid #6ee7a8;
+                padding: 7px 11px;
             }
             QPushButton#ExportButton:pressed {
                 background: #14532d;
@@ -671,6 +708,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 background: #141c27;
                 color: #dbe7f3;
                 padding: 0px;
+                outline: 0px;
             }
             QToolButton#MenuToggleButton:hover {
                 background: #182231;
@@ -680,6 +718,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 background: #101722;
                 border: 1px solid #f2c94c;
             }
+            QToolButton#MenuToggleButton:focus {
+                background: #1b2635;
+                border: 2px solid #f2c94c;
+            }
             QToolButton#MenuToggleButton[dragOutside="true"] {
                 background: #141c27;
                 border: 1px solid #32455f;
@@ -688,6 +730,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 color: #dbe7f3;
                 spacing: 8px;
                 font-weight: 600;
+                outline: 0px;
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 8px;
+                padding: 3px 7px 3px 8px;
+            }
+            QCheckBox:hover {
+                color: #f8fdff;
+                background: transparent;
+                border: 1px solid transparent;
+            }
+            QCheckBox[tabFocus="true"] {
+                color: #f8fdff;
+                background: transparent;
+                border: 2px solid #f2c94c;
+                padding: 2px 6px 2px 7px;
             }
             QCheckBox::indicator {
                 width: 18px;
@@ -696,8 +754,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 border: 1px solid #3a4a5f;
                 background: #101722;
             }
+            QCheckBox::indicator:hover {
+                border: 1px solid #50647d;
+                background: #152131;
+            }
             QCheckBox::indicator:checked {
-                background: #f2c94c;
+                background: #e0b63d;
+                border: 1px solid #ffd666;
+            }
+            QCheckBox[tabFocus="true"]::indicator {
+                border: 1px solid #3a4a5f;
+                background: #101722;
+            }
+            QCheckBox[tabFocus="true"]::indicator:checked {
+                background: #e0b63d;
                 border: 1px solid #ffd666;
             }
             QTableView#AchievementTable {
@@ -817,7 +887,79 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.edt_key.setCursorPosition(0)
 
+    def _clear_keyboard_focus(self) -> None:
+        focused = QtWidgets.QApplication.focusWidget()
+        if focused and focused.window() is self:
+            focused.clearFocus()
+        self.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+
+    def _visible_combo_popup_owner(self) -> Optional[QtWidgets.QComboBox]:
+        for combo in self.findChildren(QtWidgets.QComboBox):
+            popup = getattr(combo, "_popup", None)
+            if popup is not None and popup.isVisible():
+                return combo
+        return None
+
+    def _scroll_table_with_arrows(self, key: int) -> bool:
+        if not getattr(self, "_menu_collapsed", False) or not hasattr(self, "table"):
+            return False
+        focused = QtWidgets.QApplication.focusWidget()
+        if self._is_field_or_field_child(focused):
+            return False
+        if key in (QtCore.Qt.Key.Key_Left, QtCore.Qt.Key.Key_Right):
+            bar = self.table.horizontalScrollBar()
+            direction = -1 if key == QtCore.Qt.Key.Key_Left else 1
+        elif key in (QtCore.Qt.Key.Key_Up, QtCore.Qt.Key.Key_Down):
+            bar = self.table.verticalScrollBar()
+            direction = -1 if key == QtCore.Qt.Key.Key_Up else 1
+        else:
+            return False
+        step = bar.singleStep() or 40
+        bar.setValue(bar.value() + direction * step)
+        return True
+
+    def _handle_global_key_press(self, event: QtGui.QKeyEvent) -> bool:
+        key = event.key()
+        focused = QtWidgets.QApplication.focusWidget()
+        popup_owner = self._visible_combo_popup_owner()
+        if key == QtCore.Qt.Key.Key_Escape:
+            if popup_owner is not None:
+                popup_owner.hidePopup()
+            elif isinstance(focused, QtWidgets.QComboBox):
+                focused.hidePopup()
+            self._clear_keyboard_focus()
+            event.accept()
+            return True
+        if popup_owner is not None:
+            handler = getattr(popup_owner, "_handle_popup_key", None)
+            if handler is not None and handler(event):
+                return True
+        if popup_owner is None and self._scroll_table_with_arrows(key):
+            event.accept()
+            return True
+        if key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter):
+            if isinstance(focused, QtWidgets.QCheckBox) and focused.isEnabled():
+                focused.toggle()
+                event.accept()
+                return True
+            if isinstance(focused, QtWidgets.QComboBox):
+                popup = getattr(focused, "_popup", None)
+                if popup is not None and popup.isVisible():
+                    return False
+                focused.showPopup()
+                event.accept()
+                return True
+            if isinstance(focused, (QtWidgets.QPushButton, QtWidgets.QToolButton)) and focused.isEnabled():
+                focused.click()
+                event.accept()
+                return True
+        return False
+
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if event.type() == QtCore.QEvent.Type.KeyPress and isinstance(event, QtGui.QKeyEvent):
+            if self._handle_global_key_press(event):
+                return True
+
         if hasattr(self, "edt_key") and obj is self.edt_key:
             event_type = event.type()
             if event_type in (QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.FocusOut):
@@ -872,7 +1014,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         focused = QtWidgets.QApplication.focusWidget()
-        if focused and focused.window() is self:
+        keep_toggle_focus = focused is self.btn_toggle_menu
+        if focused and focused.window() is self and not keep_toggle_focus:
             focused.clearFocus()
 
         self._menu_animating = True
@@ -937,6 +1080,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.btn_toggle_menu.setArrowType(QtCore.Qt.ArrowType.UpArrow)
             self.controls_card.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
             self.btn_toggle_menu.setEnabled(True)
+            if end_collapsed:
+                if keep_toggle_focus:
+                    QtCore.QTimer.singleShot(0, self.btn_toggle_menu.setFocus)
+                else:
+                    QtCore.QTimer.singleShot(0, self._clear_keyboard_focus)
             self._menu_animating = False
             self._menu_animation_group = None
             group.deleteLater()
@@ -1166,7 +1314,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.icons_enabled:
             self.refresh_table(update_status=False)
         ThemedMessageDialog.information(self, self.i18n.t("info"), self.i18n.t("cache_cleared"))
-        self._clear_input_selection_after_dialog()
+        self._clear_input_selection_after_dialog(self.btn_clear_cache)
 
     def on_performance_mode_changed(self):
         mode = self.cmb_performance.currentData() or "auto"
@@ -1264,7 +1412,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_stop(self):
         if not self._export_blocked_until_ready:
             ThemedMessageDialog.warning(self, self.i18n.t("warning"), self.i18n.t("stop_not_loading"))
-            self._clear_input_selection_after_dialog()
+            self._clear_input_selection_after_dialog(self.btn_stop)
             return
 
         self.btn_stop.setEnabled(False)
@@ -1728,11 +1876,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if changed:
             self.refresh_table(update_status=filter_changed)
 
-    def _clear_input_selection_after_dialog(self):
+    def _clear_input_selection_after_dialog(self, focus_widget: Optional[QtWidgets.QWidget] = None):
         for line_edit in self.findChildren(QtWidgets.QLineEdit):
             line_edit.deselect()
-            line_edit.clearFocus()
-        self.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+            if focus_widget is None or line_edit is not focus_widget:
+                line_edit.clearFocus()
+        if focus_widget is not None and focus_widget.isEnabled() and focus_widget.isVisible():
+            QtCore.QTimer.singleShot(0, lambda w=focus_widget: w.setFocus(QtCore.Qt.FocusReason.OtherFocusReason))
+        else:
+            self.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
 
     def _threshold_label(self) -> str:
         if self.chk_only_exact.isChecked():
@@ -1795,11 +1947,11 @@ class MainWindow(QtWidgets.QMainWindow):
         t = self.i18n.t
         if self._export_blocked_until_ready:
             ThemedMessageDialog.warning(self, t("warning"), t("export_loading"))
-            self._clear_input_selection_after_dialog()
+            self._clear_input_selection_after_dialog(self.btn_export)
             return
         if self.table.rowCount() == 0:
             ThemedMessageDialog.information(self, t("info"), t("export_none"))
-            self._clear_input_selection_after_dialog()
+            self._clear_input_selection_after_dialog(self.btn_export)
             return
 
         default_path = os.path.join(app_exports_dir(), self._csv_default_filename())
