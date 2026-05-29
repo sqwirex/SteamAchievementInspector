@@ -1,4 +1,5 @@
 from contextlib import suppress
+import re
 from typing import Optional, Tuple
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -224,12 +225,26 @@ class ContextMenuLineEdit(CopyablePasswordLineEditMixin, QtWidgets.QLineEdit):
 
 
 class StyledClearLineEdit(CopyablePasswordLineEditMixin, QtWidgets.QLineEdit):
+    _STEAM_API_KEY_RE = re.compile(r"^[A-Fa-f0-9]{32}$")
+    _STEAM_API_KEY_SEARCH_RE = re.compile(r"(?<![A-Fa-f0-9])[A-Fa-f0-9]{32}(?![A-Fa-f0-9])")
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._context_menu_popup: Optional[CustomTextContextMenu] = None
-        self.setClearButtonEnabled(True)
-        self.textChanged.connect(self._polish_clear_button)
-        QtCore.QTimer.singleShot(0, self._polish_clear_button)
+        self._manual_undo_stack: list[str] = []
+        self._manual_redo_stack: list[str] = []
+        self._secret_visibility_enabled = False
+        self._secret_is_visible = False
+        self._secret_echo_mode = QtWidgets.QLineEdit.EchoMode.Password
+        self._secret_last_text = self.text()
+        self._force_secret_hide_after_text_change = False
+        self._eye_action = self.addAction(self._eye_closed_icon(), QtWidgets.QLineEdit.ActionPosition.TrailingPosition)
+        self._eye_action.triggered.connect(self._toggle_secret_visibility)
+        self._clear_action = self.addAction(self._clear_icon(), QtWidgets.QLineEdit.ActionPosition.TrailingPosition)
+        self._clear_action.triggered.connect(self._clear_undoable)
+        self.textChanged.connect(self._refresh_clear_action)
+        self.textChanged.connect(self._handle_secret_text_changed)
+        QtCore.QTimer.singleShot(0, self._refresh_clear_action)
 
     @staticmethod
     def _clear_icon() -> QtGui.QIcon:
@@ -248,22 +263,260 @@ class StyledClearLineEdit(CopyablePasswordLineEditMixin, QtWidgets.QLineEdit):
         painter.end()
         return QtGui.QIcon(pix)
 
-    def _polish_clear_button(self):
-        button = self.findChild(QtWidgets.QToolButton)
-        if not button:
+    @staticmethod
+    def _eye_open_icon() -> QtGui.QIcon:
+        size = 22
+        pix = QtGui.QPixmap(size, size)
+        pix.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(pix)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(QtGui.QPen(QtGui.QColor("#ffd54f"), 1.8, QtCore.Qt.PenStyle.SolidLine, QtCore.Qt.PenCapStyle.RoundCap))
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        eye = QtGui.QPainterPath()
+        eye.moveTo(3.5, 11)
+        eye.cubicTo(7.0, 5.8, 15.0, 5.8, 18.5, 11)
+        eye.cubicTo(15.0, 16.2, 7.0, 16.2, 3.5, 11)
+        painter.drawPath(eye)
+        painter.setBrush(QtGui.QColor("#ffd54f"))
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.drawEllipse(QtCore.QPointF(11, 11), 2.4, 2.4)
+        painter.end()
+        return QtGui.QIcon(pix)
+
+    @staticmethod
+    def _eye_closed_icon() -> QtGui.QIcon:
+        size = 22
+        pix = QtGui.QPixmap(size, size)
+        pix.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(pix)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(QtGui.QPen(QtGui.QColor("#ffd54f"), 1.8, QtCore.Qt.PenStyle.SolidLine, QtCore.Qt.PenCapStyle.RoundCap))
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        eye = QtGui.QPainterPath()
+        eye.moveTo(3.5, 11)
+        eye.cubicTo(7.0, 5.8, 15.0, 5.8, 18.5, 11)
+        eye.cubicTo(15.0, 16.2, 7.0, 16.2, 3.5, 11)
+        painter.drawPath(eye)
+        painter.drawLine(QtCore.QPointF(5.0, 17.0), QtCore.QPointF(17.0, 5.0))
+        painter.end()
+        return QtGui.QIcon(pix)
+
+    def _refresh_clear_action(self):
+        self._clear_action.setVisible(bool(self.text()) and not self.isReadOnly())
+        self._eye_action.setVisible(self._secret_visibility_enabled)
+        self._eye_action.setIcon(self._eye_open_icon() if self._secret_is_visible else self._eye_closed_icon())
+        self._polish_trailing_buttons()
+
+    def _uses_manual_undo(self) -> bool:
+        return self._secret_visibility_enabled
+
+    def _push_manual_undo(self, text: str) -> None:
+        if self._manual_undo_stack and self._manual_undo_stack[-1] == text:
             return
-        button.setIcon(self._clear_icon())
-        button.setIconSize(QtCore.QSize(22, 22))
-        button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        button.setStyleSheet("""
-            QToolButton {
-                border: 0px;
-                background: transparent;
-                padding: 0px;
-                margin-right: 4px;
-            }
-            QToolButton:hover { background: transparent; }
-        """)
+        self._manual_undo_stack.append(text)
+        if len(self._manual_undo_stack) > 100:
+            self._manual_undo_stack = self._manual_undo_stack[-100:]
+
+    def _set_text_from_history(self, text: str) -> None:
+        self.setText(text)
+        self.deselect()
+        self.setCursorPosition(len(text))
+
+    def _looks_like_steam_api_key(self, text: str) -> bool:
+        return bool(self._STEAM_API_KEY_RE.fullmatch(text.strip()))
+
+    def _contains_steam_api_key(self, text: str) -> bool:
+        return bool(self._STEAM_API_KEY_SEARCH_RE.search(text.strip()))
+
+    def _capture_cursor_state(self) -> tuple[int, int, int]:
+        selection_start = self.selectionStart()
+        selection_length = len(self.selectedText()) if selection_start >= 0 else 0
+        return self.cursorPosition(), selection_start, selection_length
+
+    def _hide_secret_if_api_key_is_visible(self, text: str | None = None) -> None:
+        if not self._secret_visibility_enabled or not self._secret_is_visible:
+            return
+        if not self._looks_like_steam_api_key(self.text() if text is None else text):
+            return
+        self._hide_secret_after_api_paste(*self._capture_cursor_state())
+
+    def _handle_secret_text_changed(self, text: str) -> None:
+        previous = self._secret_last_text
+        self._secret_last_text = text
+        if not self._secret_visibility_enabled:
+            self._force_secret_hide_after_text_change = False
+            return
+        changed_by_insert = len(text) - len(previous) > 1
+        should_hide = self._force_secret_hide_after_text_change or (changed_by_insert and not self._looks_like_steam_api_key(previous))
+        if should_hide and self._looks_like_steam_api_key(text):
+            QtCore.QTimer.singleShot(0, lambda: self._hide_secret_if_api_key_is_visible(text))
+        self._force_secret_hide_after_text_change = False
+
+    def _hide_secret_after_api_paste(self, cursor_position: int, selection_start: int, selection_length: int) -> None:
+        if not self._secret_visibility_enabled or not self._secret_is_visible:
+            return
+        self._secret_is_visible = False
+        super().setEchoMode(self._secret_echo_mode)
+        self._refresh_clear_action()
+        self._restore_cursor_state(cursor_position, selection_start, selection_length)
+        QtCore.QTimer.singleShot(0, lambda: self._restore_cursor_state(cursor_position, selection_start, selection_length))
+
+    def _manual_undo(self) -> bool:
+        if not self._manual_undo_stack:
+            self.deselect()
+            return True
+        current = self.text()
+        previous = self._manual_undo_stack.pop()
+        if previous != current:
+            self._manual_redo_stack.append(current)
+        self._set_text_from_history(previous)
+        return True
+
+    def _manual_redo(self) -> bool:
+        if not self._manual_redo_stack:
+            self.deselect()
+            return True
+        current = self.text()
+        next_text = self._manual_redo_stack.pop()
+        if next_text != current:
+            self._push_manual_undo(current)
+        self._set_text_from_history(next_text)
+        return True
+
+    def _clear_undoable(self):
+        text = self.text()
+        if not text or self.isReadOnly():
+            return
+        if self._uses_manual_undo():
+            self._push_manual_undo(text)
+            self._manual_redo_stack.clear()
+            self._set_text_from_history("")
+        else:
+            self.setSelection(0, len(text))
+            self.del_()
+        QtCore.QTimer.singleShot(0, self._remove_full_selection_after_edit)
+
+    def _remove_full_selection_after_edit(self):
+        if self.hasSelectedText() and self.selectionStart() == 0 and self.selectedText() == self.text():
+            self.deselect()
+            self.setCursorPosition(len(self.text()))
+
+    def _polish_trailing_buttons(self):
+        buttons = self.findChildren(QtWidgets.QToolButton)
+        for button in buttons:
+            button.setIconSize(QtCore.QSize(22, 22))
+            button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            button.setStyleSheet("""
+                QToolButton {
+                    border: 0px;
+                    background: transparent;
+                    padding: 0px;
+                    margin-right: 4px;
+                }
+                QToolButton:hover { background: transparent; }
+            """)
+
+    def setEchoMode(self, mode: QtWidgets.QLineEdit.EchoMode) -> None:
+        if mode == QtWidgets.QLineEdit.EchoMode.Normal:
+            self._secret_visibility_enabled = False
+            self._secret_is_visible = False
+        else:
+            self._secret_visibility_enabled = True
+            self._secret_is_visible = False
+            self._secret_echo_mode = mode
+        super().setEchoMode(mode)
+        self._refresh_clear_action()
+
+    def _restore_cursor_state(self, cursor_position: int, selection_start: int, selection_length: int) -> None:
+        text_length = len(self.text())
+        cursor_position = max(0, min(cursor_position, text_length))
+        selection_start = max(-1, min(selection_start, text_length))
+        selection_length = max(0, min(selection_length, text_length - max(selection_start, 0)))
+        self.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        if selection_start >= 0 and selection_length > 0:
+            self.setSelection(selection_start, selection_length)
+        else:
+            self.deselect()
+            self.setCursorPosition(cursor_position)
+
+    def _toggle_secret_visibility(self) -> None:
+        if not self._secret_visibility_enabled:
+            return
+        cursor_position = self.cursorPosition()
+        selection_start = self.selectionStart()
+        selection_length = len(self.selectedText()) if selection_start >= 0 else 0
+        self._secret_is_visible = not self._secret_is_visible
+        if self._secret_is_visible:
+            super().setEchoMode(QtWidgets.QLineEdit.EchoMode.Normal)
+        else:
+            super().setEchoMode(self._secret_echo_mode)
+        self._refresh_clear_action()
+        self._restore_cursor_state(cursor_position, selection_start, selection_length)
+        QtCore.QTimer.singleShot(0, lambda: self._restore_cursor_state(cursor_position, selection_start, selection_length))
+
+    def _is_secret_hidden(self) -> bool:
+        return self._secret_visibility_enabled and not self._secret_is_visible
+
+    def copy(self) -> None:
+        if self._is_secret_hidden():
+            return
+        super().copy()
+
+    def cut(self) -> None:
+        if self._is_secret_hidden():
+            return
+        super().cut()
+
+    def paste(self) -> None:
+        pasted_text = QtWidgets.QApplication.clipboard().text()
+        should_hide_secret = self._secret_visibility_enabled and self._contains_steam_api_key(pasted_text)
+        if should_hide_secret:
+            self._force_secret_hide_after_text_change = True
+        before = self.text()
+        super().paste()
+        after = self.text()
+        if self._uses_manual_undo() and after != before:
+            self._push_manual_undo(before)
+            self._manual_redo_stack.clear()
+        if should_hide_secret or self._looks_like_steam_api_key(after):
+            self._hide_secret_if_api_key_is_visible(after)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if self._secret_visibility_enabled and event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter) and event.modifiers() == QtCore.Qt.KeyboardModifier.NoModifier:
+            self._toggle_secret_visibility()
+            event.accept()
+            return
+        if self._is_secret_hidden() and (event.matches(QtGui.QKeySequence.StandardKey.Copy) or event.matches(QtGui.QKeySequence.StandardKey.Cut)):
+            event.accept()
+            return
+        is_undo = event.matches(QtGui.QKeySequence.StandardKey.Undo)
+        is_redo = event.matches(QtGui.QKeySequence.StandardKey.Redo)
+        is_paste = event.matches(QtGui.QKeySequence.StandardKey.Paste)
+        if self._secret_visibility_enabled and is_paste and self._contains_steam_api_key(QtWidgets.QApplication.clipboard().text()):
+            self._force_secret_hide_after_text_change = True
+        if self._uses_manual_undo():
+            if is_undo:
+                self._manual_undo()
+                event.accept()
+                QtCore.QTimer.singleShot(0, self._remove_full_selection_after_edit)
+                return
+            if is_redo:
+                self._manual_redo()
+                event.accept()
+                QtCore.QTimer.singleShot(0, self._remove_full_selection_after_edit)
+                return
+            before = self.text()
+            super().keyPressEvent(event)
+            after = self.text()
+            if after != before:
+                self._push_manual_undo(before)
+                self._manual_redo_stack.clear()
+            if is_paste or self._looks_like_steam_api_key(after):
+                self._hide_secret_if_api_key_is_visible(after)
+            return
+        super().keyPressEvent(event)
+        if is_undo:
+            QtCore.QTimer.singleShot(0, self._remove_full_selection_after_edit)
 
     def contextMenuEvent(self, event: QtGui.QContextMenuEvent) -> None:
         self._context_menu_popup = CustomTextContextMenu(self)
@@ -363,6 +616,18 @@ class SmartSpinBox(QtWidgets.QSpinBox):
                 event.accept()
                 return
         super().mousePressEvent(event)
+
+    def _remove_full_selection_after_edit(self) -> None:
+        line_edit = self.lineEdit()
+        if line_edit.hasSelectedText() and line_edit.selectionStart() == 0 and line_edit.selectedText() == line_edit.text():
+            line_edit.deselect()
+            line_edit.setCursorPosition(len(line_edit.text()))
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        is_undo = event.matches(QtGui.QKeySequence.StandardKey.Undo)
+        super().keyPressEvent(event)
+        if is_undo:
+            QtCore.QTimer.singleShot(0, self._remove_full_selection_after_edit)
 
     def contextMenuEvent(self, event: QtGui.QContextMenuEvent) -> None:
         self._context_menu_popup = CustomTextContextMenu(self.lineEdit())

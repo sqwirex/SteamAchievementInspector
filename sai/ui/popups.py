@@ -401,6 +401,7 @@ class ThemedMessageDialog(QtWidgets.QWidget):
         close_btn = QtWidgets.QPushButton("×")
         close_btn.setObjectName("DialogCloseButton")
         close_btn.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        close_btn.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         close_btn.setFixedSize(30, 30)
         close_btn.clicked.connect(self.reject)
         title_row.addWidget(close_btn, 0, QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
@@ -450,6 +451,7 @@ class ThemedMessageDialog(QtWidgets.QWidget):
         ok_btn = QtWidgets.QPushButton("OK")
         ok_btn.setObjectName("DialogOkButton")
         ok_btn.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
+        ok_btn.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
         ok_btn.setFixedHeight(42)
         ok_btn.setMinimumWidth(104)
         ok_btn.clicked.connect(self.accept)
@@ -548,14 +550,24 @@ class ThemedMessageDialog(QtWidgets.QWidget):
             return
         super().keyPressEvent(event)
 
+    def _clear_parent_focus(self):
+        parent = self.parentWidget()
+        focused = QtWidgets.QApplication.focusWidget()
+        if focused is not None and (parent is None or focused.window() is parent.window()):
+            focused.clearFocus()
+        if parent is not None:
+            parent.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+
     def _finish(self, result: int):
         self._result = result
         parent = self.parentWidget()
         if parent is not None:
             parent.removeEventFilter(self)
+        self._clear_parent_focus()
         self.hide()
         if self._loop is not None and self._loop.isRunning():
             self._loop.quit()
+        QtCore.QTimer.singleShot(0, self._clear_parent_focus)
         self.deleteLater()
 
     def accept(self):
@@ -568,12 +580,16 @@ class ThemedMessageDialog(QtWidgets.QWidget):
         parent = self.parentWidget()
         if parent is not None:
             self.setGeometry(parent.rect())
+        focused = QtWidgets.QApplication.focusWidget()
+        if focused is not None:
+            focused.clearFocus()
         self.show()
         self.raise_()
         self.activateWindow()
-        self.setFocus()
+        self.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
         self._loop = QtCore.QEventLoop(self)
         self._loop.exec()
+        self._clear_parent_focus()
         return self._result
 
     @classmethod

@@ -43,6 +43,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stopped_during_game_list_loading = False
         self._loading_game_list = False
         self._export_blocked_until_ready = False
+        self._load_error_reported = False
 
         self._workers: List[QtCore.QRunnable] = []
 
@@ -898,13 +899,13 @@ class MainWindow(QtWidgets.QMainWindow):
             popup = getattr(combo, "_popup", None)
             if popup is not None and popup.isVisible():
                 return combo
+            view = combo.view()
+            if view is not None and view.isVisible():
+                return combo
         return None
 
     def _scroll_table_with_arrows(self, key: int) -> bool:
-        if not getattr(self, "_menu_collapsed", False) or not hasattr(self, "table"):
-            return False
-        focused = QtWidgets.QApplication.focusWidget()
-        if self._is_field_or_field_child(focused):
+        if not hasattr(self, "table"):
             return False
         if key in (QtCore.Qt.Key.Key_Left, QtCore.Qt.Key.Key_Right):
             bar = self.table.horizontalScrollBar()
@@ -1367,6 +1368,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stopped_during_game_list_loading = False
         self._loading_game_list = True
         self._export_blocked_until_ready = True
+        self._load_error_reported = False
         self.btn_fetch.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.progress.setValue(0)
@@ -1401,7 +1403,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                              self._on_games_list_ready(key, steamid64, games))
         )
         lgw.signals.error.connect(
-            lambda msg, w=lgw: (self._safe_remove_worker(w), self.on_error(msg))
+            lambda msg, w=lgw: (self._safe_remove_worker(w), self._on_game_list_error(msg))
         )
         self.threadpool.start(lgw)
 
@@ -1458,11 +1460,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _start_next_jobs(self):
         while (not self.cancel_event.is_set()) and self._game_queue and (self._active_workers < self.max_workers):
             g = self._game_queue.popleft()
-            worker = GameFetchWorker(self.current_api_key, self.current_steamid, g, self.cancel_event)
+            worker = GameFetchWorker(self.current_api_key, self.current_steamid, g, self.cancel_event, self.i18n.lang)
             self._workers.append(worker)
 
             worker.signals.partial.connect(self._on_game_partial)
-            worker.signals.error.connect(lambda _msg, w=worker: self._safe_remove_worker(w))
+            worker.signals.error.connect(lambda msg, w=worker: self._on_game_fetch_error(msg))
             worker.signals.done.connect(lambda w=worker: (self._safe_remove_worker(w), self._on_game_done()))
 
             self._active_workers += 1
@@ -1471,17 +1473,22 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_game_done(self):
         self.loaded_games += 1
         self._active_workers = max(0, self._active_workers - 1)
-        self._update_progress_label()
+        if not self._load_error_reported:
+            self._update_progress_label()
 
         if not self.cancel_event.is_set() and self._game_queue:
             self._start_next_jobs()
 
-        if self.loaded_games >= self.total_games:
+        if self.loaded_games >= self.total_games and not self._load_error_reported:
             self._finalize_loading(completed=True)
             return
 
         if self.cancel_event.is_set() and self._active_workers == 0:
-            self._finalize_loading(completed=False, stopped=True)
+            if self._load_error_reported:
+                self._finalize_loading(completed=False)
+                self._set_status("error")
+            else:
+                self._finalize_loading(completed=False, stopped=True)
 
     def _achievement_exact_key(self, a: Achievement) -> tuple:
         if a.appid and a.apiname:
@@ -1669,7 +1676,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress.setValue(pct)
         self._set_status("processed", done=done, total=self.total_games, ach=len(self.achievements))
 
+    def _on_game_fetch_error(self, message: str):
+        if self._load_error_reported or not self._export_blocked_until_ready:
+            return
+        if self.cancel_event.is_set():
+            return
+        self._load_error_reported = True
+        self.cancel_event.set()
+        self._game_queue.clear()
+        self._stop_icon_downloads()
+        self._set_status("error")
+        ThemedMessageDialog.critical(self, self.i18n.t("error"), message)
+
+    def _on_game_list_error(self, message: str):
+        if self.cancel_event.is_set() and not self._load_error_reported:
+            self._loading_game_list = False
+            self._finalize_loading(stopped=True)
+            return
+        self.on_error(message)
+
     def on_error(self, message: str):
+        if self.cancel_event.is_set() and not self._load_error_reported:
+            self._loading_game_list = False
+            self._finalize_loading(stopped=True)
+            return
+        self._load_error_reported = True
+        self.cancel_event.set()
+        self._game_queue.clear()
+        self._stop_icon_downloads()
         self._loading_game_list = False
         self._finalize_loading()
         self._set_status("error")
@@ -1879,12 +1913,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _clear_input_selection_after_dialog(self, focus_widget: Optional[QtWidgets.QWidget] = None):
         for line_edit in self.findChildren(QtWidgets.QLineEdit):
             line_edit.deselect()
-            if focus_widget is None or line_edit is not focus_widget:
-                line_edit.clearFocus()
-        if focus_widget is not None and focus_widget.isEnabled() and focus_widget.isVisible():
-            QtCore.QTimer.singleShot(0, lambda w=focus_widget: w.setFocus(QtCore.Qt.FocusReason.OtherFocusReason))
-        else:
-            self.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+            line_edit.clearFocus()
+        if focus_widget is not None:
+            focus_widget.clearFocus()
+        focused = QtWidgets.QApplication.focusWidget()
+        if focused and focused.window() is self:
+            focused.clearFocus()
+        self.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        QtCore.QTimer.singleShot(0, self._clear_keyboard_focus)
 
     def _threshold_label(self) -> str:
         if self.chk_only_exact.isChecked():

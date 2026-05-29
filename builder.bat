@@ -53,6 +53,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
+taskkill /f /im SteamAchievementInspector.exe >nul 2>nul
 if exist "build" rmdir /s /q "build"
 if exist "dist" rmdir /s /q "dist"
 if exist "SteamAchievementInspector.spec" del /f /q "SteamAchievementInspector.spec"
@@ -70,19 +71,12 @@ if errorlevel 1 (
 )
 
 echo.
-echo === Refreshing Windows icon cache / Explorer ===
-
-taskkill /f /im explorer.exe >nul 2>nul
-
-del /f /q "%LOCALAPPDATA%\IconCache.db" >nul 2>nul
-del /f /q "%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache*" >nul 2>nul
-del /f /q "%LOCALAPPDATA%\Microsoft\Windows\Explorer\thumbcache*" >nul 2>nul
-
-start explorer.exe
-
-echo.
 echo === Build finished ===
 echo EXE: dist\SteamAchievementInspector.exe
-echo Explorer restarted and icon cache cleanup attempted.
-pause
+echo Opening dist and starting app...
+
+start "" explorer.exe "%CD%\dist"
+start "" "%CD%\dist\SteamAchievementInspector.exe"
+
 endlocal
+exit /b 0

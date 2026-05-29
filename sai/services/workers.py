@@ -6,7 +6,7 @@ from PyQt6 import QtCore
 from sai.core.i18n import I18n
 from sai.core.models import Achievement
 from sai.storage.cache import read_schema, read_schema_any, write_schema
-from sai.services.steam_api import InvalidAPIKeyError, SteamAPI
+from sai.services.steam_api import InvalidAPIKeyError, NetworkConnectionError, SteamAPI
 
 
 SCHEMA_STALE_REFRESH_LIMIT = 50
@@ -48,6 +48,9 @@ class ListGamesWorker(QtCore.QRunnable):
         except InvalidAPIKeyError:
             i18n = I18n(self.lang)
             self.signals.error.emit(i18n.t("api_invalid"))
+        except NetworkConnectionError:
+            i18n = I18n(self.lang)
+            self.signals.error.emit(i18n.t("network_error"))
         except ValueError as e:
             i18n = I18n(self.lang)
             key = str(e)
@@ -62,12 +65,13 @@ class GameFetchWorker(QtCore.QRunnable):
         done = QtCore.pyqtSignal()
         error = QtCore.pyqtSignal(str)
 
-    def __init__(self, api_key: str, steamid64: str, game: Dict, cancel_event: threading.Event):
+    def __init__(self, api_key: str, steamid64: str, game: Dict, cancel_event: threading.Event, lang: str):
         super().__init__()
         self.api_key = api_key
         self.steamid64 = steamid64
         self.game = game
         self.cancel_event = cancel_event
+        self.lang = lang
         self.signals = GameFetchWorker.Signals()
 
     @QtCore.pyqtSlot()
@@ -91,6 +95,8 @@ class GameFetchWorker(QtCore.QRunnable):
                         try:
                             schema = api.get_schema_for_game(appid)
                             write_schema(appid, schema)
+                        except NetworkConnectionError:
+                            raise
                         except Exception:
                             schema = stale_schema or {}
                     else:
@@ -111,6 +117,9 @@ class GameFetchWorker(QtCore.QRunnable):
                         )
                     )
                 self.signals.partial.emit(achs)
+        except NetworkConnectionError:
+            i18n = I18n(self.lang)
+            self.signals.error.emit(i18n.t("network_error"))
         except Exception as e:
             self.signals.error.emit(str(e))
         finally:
