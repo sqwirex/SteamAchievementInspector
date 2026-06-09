@@ -8,9 +8,10 @@ def app_base_dir() -> str:
     return os.path.abspath(os.getcwd())
 
 
-def app_cache_dir() -> str:
+def app_cache_dir(create: bool = False) -> str:
     path = os.path.join(app_base_dir(), "cache")
-    os.makedirs(path, exist_ok=True)
+    if create:
+        os.makedirs(path, exist_ok=True)
     return path
 
 

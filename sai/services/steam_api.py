@@ -14,6 +14,14 @@ class InvalidAPIKeyError(PermissionError):
     ...
 
 
+class NetworkConnectionError(ConnectionError):
+    ...
+
+
+class SteamServiceUnavailableError(RuntimeError):
+    ...
+
+
 class SteamAPI:
     def __init__(self, api_key: str, timeout: int = 25):
         self.api_key = api_key
@@ -42,7 +50,7 @@ class SteamAPI:
         if last_response is not None:
             last_response.raise_for_status()
         if last_error is not None:
-            raise last_error
+            raise NetworkConnectionError("network_error") from last_error
         raise RuntimeError("Steam API request failed.")
 
     @staticmethod
@@ -77,7 +85,15 @@ class SteamAPI:
     def get_player_achievements_full(self, steamid64: str, appid: int) -> List[Dict]:
         url = f"{API_BASE}/ISteamUserStats/GetPlayerAchievements/v0001/"
         params = {"key": self.api_key, "steamid": steamid64, "appid": appid, "l": STEAM_API_LANGUAGE}
-        data = self._get(url, params)
+        try:
+            data = self._get(url, params)
+        except requests.HTTPError as exc:
+            response = getattr(exc, "response", None)
+            if response is not None and response.status_code in (400, 404):
+                return []
+            if response is not None and 500 <= response.status_code < 600:
+                raise SteamServiceUnavailableError(f"HTTP {response.status_code}") from exc
+            raise
         ps = data.get("playerstats", {})
         if ps.get("success") is False:
             return []
@@ -91,7 +107,15 @@ class SteamAPI:
     def get_schema_for_game(self, appid: int) -> Dict[str, Dict[str, str]]:
         url = f"{API_BASE}/ISteamUserStats/GetSchemaForGame/v2/"
         params = {"key": self.api_key, "appid": appid, "l": STEAM_API_LANGUAGE}
-        data = self._get(url, params)
+        try:
+            data = self._get(url, params)
+        except requests.HTTPError as exc:
+            response = getattr(exc, "response", None)
+            if response is not None and response.status_code in (400, 404):
+                return {}
+            if response is not None and 500 <= response.status_code < 600:
+                raise SteamServiceUnavailableError(f"HTTP {response.status_code}") from exc
+            raise
         game = data.get("game", {})
         stats = game.get("availableGameStats", {}) or {}
         ach = stats.get("achievements", []) or []

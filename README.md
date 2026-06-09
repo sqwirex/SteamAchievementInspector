@@ -62,6 +62,15 @@ To fetch any user data, we need to query Valve’s databases. That’s exactly w
 
 ---
 
+## Windows Defender warning
+
+On first launch, Windows Defender or SmartScreen may show a warning because the application is distributed as an unsigned `.exe` file from an independent developer. This does not mean the app is malicious.
+
+If you downloaded the archive from the official repository Releases page, you can allow the app to run. The tool does not modify Steam, does not inject into games, and only uses the official Steam Web API to read public achievement data.
+
+
+---
+
 ## Author
 
 Steam: [SqwireX](https://steamcommunity.com/id/sqwirex/)  
@@ -85,7 +94,7 @@ If this tool helped, great! You can also audit your own profile — and if you e
 ## Как использовать и что нужно
 
 - Введите **URL профиля Steam** (поддерживаются `profiles/<steamid64>`, `id/<vanity>` и чистый steamid64).
-- Введите **Steam Web API Key** ([как получить](#как-получить-steam-web-api-key)).
+- Введите **Steam Web API Ключ** ([как получить](#как-получить-steam-web-api-key)).
 - Нажмите **Загрузить** и ожидайте подгрузки всех игр и достижений (если не грузит или грузит частично — см. раздел [почему может ничего не показывать](#почему-может-ничего-не-показывать)).
 - Если приложение заметно лагает во время загрузки или прокрутки списка, можно отключить загрузку иконок достижений в разделе **Иконки** или поставить **Экономный** режим происводительности. Это снизит нагрузку и ускорит работу интерфейса.
 - Поля API-ключа, профиля и выбранный язык сохраняются между запусками приложения, если их не очищать вручную.
@@ -130,6 +139,15 @@ If this tool helped, great! You can also audit your own profile — and if you e
 1. Откройте вкладку **[Releases](../../releases)** этого репозитория.
 2. Скачайте архив `SteamAchievementInspector-<версия>-win-x64.zip`.
 3. Распакуйте и запустите `SteamAchievementInspector.exe`.
+
+---
+
+## Предупреждение Windows Defender
+
+При первом запуске Windows Defender или SmartScreen может показать предупреждение, потому что приложение распространяется как неподписанный `.exe`-файл от независимого разработчика. Само по себе это не означает, что приложение вредоносное.
+
+Если вы скачали архив с официальной страницы Releases этого репозитория, запуск можно разрешить. Приложение не изменяет Steam, не внедряется в игры и использует только официальный Steam Web API для чтения открытых данных о достижениях.
+
 
 ---
 

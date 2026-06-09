@@ -6,9 +6,10 @@ from PyQt6 import QtCore
 from sai.core.i18n import I18n
 from sai.core.models import Achievement
 from sai.storage.cache import read_schema, read_schema_any, write_schema
-from sai.services.steam_api import InvalidAPIKeyError, SteamAPI
+from sai.services.steam_api import InvalidAPIKeyError, NetworkConnectionError, SteamAPI, SteamServiceUnavailableError
 
 
+UNKNOWN_ERROR_PREFIX = "__SAI_UNHANDLED_ERROR__\n"
 SCHEMA_STALE_REFRESH_LIMIT = 50
 _schema_refresh_lock = threading.Lock()
 _schema_stale_refreshes = 0
@@ -48,26 +49,37 @@ class ListGamesWorker(QtCore.QRunnable):
         except InvalidAPIKeyError:
             i18n = I18n(self.lang)
             self.signals.error.emit(i18n.t("api_invalid"))
+        except NetworkConnectionError:
+            i18n = I18n(self.lang)
+            self.signals.error.emit(i18n.t("network_error"))
         except ValueError as e:
             i18n = I18n(self.lang)
             key = str(e)
-            self.signals.error.emit(i18n.t(key) if key in ("invalid_profile", "vanity_failed") else key)
+            if key in ("invalid_profile", "vanity_failed"):
+                self.signals.error.emit(i18n.t(key))
+            else:
+                detail = key or type(e).__name__
+                self.signals.error.emit(UNKNOWN_ERROR_PREFIX + i18n.fmt("unexpected_error", detail=detail))
         except Exception as e:
-            self.signals.error.emit(str(e))
+            i18n = I18n(self.lang)
+            detail = str(e) or type(e).__name__
+            self.signals.error.emit(UNKNOWN_ERROR_PREFIX + i18n.fmt("unexpected_error", detail=detail))
 
 
 class GameFetchWorker(QtCore.QRunnable):
     class Signals(QtCore.QObject):
         partial = QtCore.pyqtSignal(list)
+        skipped_game = QtCore.pyqtSignal(str)
         done = QtCore.pyqtSignal()
         error = QtCore.pyqtSignal(str)
 
-    def __init__(self, api_key: str, steamid64: str, game: Dict, cancel_event: threading.Event):
+    def __init__(self, api_key: str, steamid64: str, game: Dict, cancel_event: threading.Event, lang: str):
         super().__init__()
         self.api_key = api_key
         self.steamid64 = steamid64
         self.game = game
         self.cancel_event = cancel_event
+        self.lang = lang
         self.signals = GameFetchWorker.Signals()
 
     @QtCore.pyqtSlot()
@@ -91,6 +103,10 @@ class GameFetchWorker(QtCore.QRunnable):
                         try:
                             schema = api.get_schema_for_game(appid)
                             write_schema(appid, schema)
+                        except (InvalidAPIKeyError, SteamServiceUnavailableError):
+                            raise
+                        except NetworkConnectionError:
+                            raise
                         except Exception:
                             schema = stale_schema or {}
                     else:
@@ -111,7 +127,14 @@ class GameFetchWorker(QtCore.QRunnable):
                         )
                     )
                 self.signals.partial.emit(achs)
+        except (InvalidAPIKeyError, SteamServiceUnavailableError):
+            self.signals.skipped_game.emit(str(self.game.get("name") or self.game.get("appid") or "Unknown"))
+        except NetworkConnectionError:
+            i18n = I18n(self.lang)
+            self.signals.error.emit(i18n.t("network_error"))
         except Exception as e:
-            self.signals.error.emit(str(e))
+            i18n = I18n(self.lang)
+            detail = str(e) or type(e).__name__
+            self.signals.error.emit(UNKNOWN_ERROR_PREFIX + i18n.fmt("unexpected_error", detail=detail))
         finally:
             self.signals.done.emit()

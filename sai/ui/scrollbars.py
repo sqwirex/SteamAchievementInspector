@@ -5,18 +5,28 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 
 class CapsuleScrollBar(QtWidgets.QScrollBar):
-    def __init__(self, orientation: QtCore.Qt.Orientation, parent: Optional[QtWidgets.QWidget] = None):
+    def __init__(
+        self,
+        orientation: QtCore.Qt.Orientation,
+        parent: Optional[QtWidgets.QWidget] = None,
+        thickness: int = 17,
+        draw_outline: bool = True,
+        draw_track: bool = True,
+    ):
         super().__init__(orientation, parent)
         self._hover_handle = False
         self._reserved_start = 0
         self._dragging = False
         self._drag_offset = 0.0
+        self._thickness = max(6, int(thickness))
+        self._draw_outline = draw_outline
+        self._draw_track = draw_track
         self.setMouseTracking(True)
 
         if orientation == QtCore.Qt.Orientation.Vertical:
-            self.setFixedWidth(17)
+            self.setFixedWidth(self._thickness)
         else:
-            self.setFixedHeight(17)
+            self.setFixedHeight(self._thickness)
 
         self.setStyleSheet("""
             QScrollBar {
@@ -47,8 +57,12 @@ class CapsuleScrollBar(QtWidgets.QScrollBar):
         rect = QtCore.QRectF(self.rect())
 
         if self._is_vertical():
-            return rect.adjusted(4.9, self._reserved_start + 2, -4.1, -2)
+            if self._thickness <= 12:
+                return rect.adjusted(4, self._reserved_start + 2, 0, -2)
+            return rect.adjusted(4.75, self._reserved_start + 2, -4.25, -2)
 
+        if self._thickness <= 12:
+            return rect.adjusted(2, 2, -2, -2)
         return rect.adjusted(2, 4.75, -2, -4.25)
 
     def _slider_rect(self) -> QtCore.QRectF:
@@ -115,26 +129,28 @@ class CapsuleScrollBar(QtWidgets.QScrollBar):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
 
-        outline_pen = QtGui.QPen(QtGui.QColor("#2b3849"), 1)
-        outline_pen.setCosmetic(True)
-        painter.setPen(outline_pen)
+        if self._draw_outline:
+            outline_pen = QtGui.QPen(QtGui.QColor("#2b3849"), 1)
+            outline_pen.setCosmetic(True)
+            painter.setPen(outline_pen)
 
-        outline_thickness = 2
-        if self._is_vertical():
-            for x in range(outline_thickness):
-                painter.drawLine(x, 0, x, self.height())
-        else:
-            for y in range(outline_thickness):
-                painter.drawLine(0, y, self.width(), y)
+            outline_thickness = 2
+            if self._is_vertical():
+                for x in range(outline_thickness):
+                    painter.drawLine(x, 0, x, self.height())
+            else:
+                for y in range(outline_thickness):
+                    painter.drawLine(0, y, self.width(), y)
 
         track = self._track_rect()
         if track.width() <= 0 or track.height() <= 0:
             return
 
-        track_radius = min(track.width(), track.height()) / 2.0
-        painter.setPen(QtCore.Qt.PenStyle.NoPen)
-        painter.setBrush(QtGui.QColor("#101722"))
-        painter.drawRoundedRect(track, track_radius, track_radius)
+        if self._draw_track:
+            track_radius = min(track.width(), track.height()) / 2.0
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            painter.setBrush(QtGui.QColor("#101722"))
+            painter.drawRoundedRect(track, track_radius, track_radius)
 
         if self.maximum() <= self.minimum():
             return
@@ -144,6 +160,7 @@ class CapsuleScrollBar(QtWidgets.QScrollBar):
             return
 
         handle_radius = min(handle.width(), handle.height()) / 2.0
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
         painter.setBrush(QtGui.QColor("#5f82aa") if (self._hover_handle or self._dragging) else QtGui.QColor("#4e7097"))
         painter.drawRoundedRect(handle, handle_radius, handle_radius)
 

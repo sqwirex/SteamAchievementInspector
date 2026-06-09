@@ -4,6 +4,7 @@ import os
 import shutil
 import tempfile
 import time
+from contextlib import suppress
 from typing import Dict, Iterable, List, Optional
 
 from sai.core.models import Achievement
@@ -15,9 +16,10 @@ USER_MAX_AGE_DAYS = 90
 MAX_ICON_CACHE_MB = 300
 
 
-def _ensure_dir(*parts: str) -> str:
-    path = os.path.join(app_cache_dir(), *parts)
-    os.makedirs(path, exist_ok=True)
+def _cache_path(*parts: str, create: bool = False) -> str:
+    path = os.path.join(app_cache_dir(create=create), *parts)
+    if create:
+        os.makedirs(path, exist_ok=True)
     return path
 
 
@@ -55,12 +57,12 @@ def _is_fresh(path: str, max_age_days: int) -> bool:
     return age_seconds <= max_age_days * 24 * 60 * 60
 
 
-def icon_cache_path(url: str) -> str:
-    return os.path.join(_ensure_dir("icons"), f"{_hash_text(url)}.img")
+def icon_cache_path(url: str, create: bool = False) -> str:
+    return os.path.join(_cache_path("icons", create=create), f"{_hash_text(url)}.img")
 
 
 def read_icon_bytes(url: str) -> Optional[bytes]:
-    path = icon_cache_path(url)
+    path = icon_cache_path(url, create=False)
     try:
         if os.path.isfile(path) and os.path.getsize(path) > 0 and _is_fresh(path, ICON_MAX_AGE_DAYS):
             with open(path, "rb") as f:
@@ -73,16 +75,16 @@ def read_icon_bytes(url: str) -> Optional[bytes]:
 def write_icon_bytes(url: str, data: bytes) -> None:
     if not url or not data:
         return
-    _atomic_write_bytes(icon_cache_path(url), data)
+    _atomic_write_bytes(icon_cache_path(url, create=True), data)
 
 
-def schema_cache_path(appid: int) -> str:
+def schema_cache_path(appid: int, create: bool = False) -> str:
     safe = int(appid)
-    return os.path.join(_ensure_dir("schemas"), f"{safe}.json")
+    return os.path.join(_cache_path("schemas", create=create), f"{safe}.json")
 
 
 def read_schema(appid: int, max_age_days: int = SCHEMA_MAX_AGE_DAYS) -> Optional[Dict[str, Dict[str, str]]]:
-    path = schema_cache_path(appid)
+    path = schema_cache_path(appid, create=False)
     try:
         if not _is_fresh(path, max_age_days):
             return None
@@ -98,7 +100,7 @@ def read_schema(appid: int, max_age_days: int = SCHEMA_MAX_AGE_DAYS) -> Optional
 
 
 def is_schema_fresh(appid: int, max_age_days: int = SCHEMA_MAX_AGE_DAYS) -> bool:
-    path = schema_cache_path(appid)
+    path = schema_cache_path(appid, create=False)
     return os.path.isfile(path) and _is_fresh(path, max_age_days)
 
 
@@ -110,16 +112,16 @@ def write_schema(appid: int, schema: Dict[str, Dict[str, str]]) -> None:
     if not schema:
         return
     payload = {"appid": int(appid), "cached_at": int(time.time()), "achievements": schema}
-    _atomic_write_json(schema_cache_path(appid), payload)
+    _atomic_write_json(schema_cache_path(appid, create=True), payload)
 
 
-def user_cache_path(steamid64: str) -> str:
+def user_cache_path(steamid64: str, create: bool = False) -> str:
     safe = "".join(ch for ch in str(steamid64 or "") if ch.isdigit()) or "unknown"
-    return os.path.join(_ensure_dir("users"), safe, "achievements.json")
+    return os.path.join(_cache_path("users", safe, create=create), "achievements.json")
 
 
 def read_user_achievements(steamid64: str) -> List[Achievement]:
-    path = user_cache_path(steamid64)
+    path = user_cache_path(steamid64, create=False)
     try:
         with open(path, "r", encoding="utf-8") as f:
             payload = json.load(f)
@@ -173,7 +175,7 @@ def write_user_achievements(steamid64: str, achievements: Iterable[Achievement])
             "unlock_time": int(a.unlock_time or 0),
         })
     payload = {"steamid64": str(steamid64), "cached_at": int(time.time()), "achievements": rows}
-    _atomic_write_json(user_cache_path(steamid64), payload)
+    _atomic_write_json(user_cache_path(steamid64, create=True), payload)
 
 
 def _remove_if_old(path: str, max_age_days: int) -> None:
@@ -185,7 +187,7 @@ def _remove_if_old(path: str, max_age_days: int) -> None:
 
 
 def _prune_icon_cache_by_size(max_mb: int) -> None:
-    icons_dir = os.path.join(app_cache_dir(), "icons")
+    icons_dir = os.path.join(app_cache_dir(create=False), "icons")
     if not os.path.isdir(icons_dir):
         return
     files = []
@@ -215,7 +217,7 @@ def _prune_icon_cache_by_size(max_mb: int) -> None:
 
 
 def cache_size_bytes() -> int:
-    base = app_cache_dir()
+    base = app_cache_dir(create=False)
     total = 0
     if not os.path.isdir(base):
         return 0
@@ -231,9 +233,8 @@ def cache_size_bytes() -> int:
 
 
 def clear_cache() -> None:
-    base = app_cache_dir()
+    base = app_cache_dir(create=False)
     if not os.path.isdir(base):
-        os.makedirs(base, exist_ok=True)
         return
     for name in os.listdir(base):
         path = os.path.join(base, name)
@@ -244,11 +245,14 @@ def clear_cache() -> None:
                 os.remove(path)
         except OSError:
             pass
-    os.makedirs(base, exist_ok=True)
+    if os.path.isdir(base) and not os.listdir(base):
+        with suppress(OSError):
+            os.rmdir(base)
 
 def cleanup_cache() -> None:
-    """Small startup cleanup: removes stale cache files and caps icon cache size."""
-    base = app_cache_dir()
+    base = app_cache_dir(create=False)
+    if not os.path.isdir(base):
+        return
 
     icons_dir = os.path.join(base, "icons")
     if os.path.isdir(icons_dir):
