@@ -50,6 +50,14 @@ To fetch any user data, we need to query Valve’s databases. That’s exactly w
 - The profile is **fully private**.
 - A **specific game** is hidden — you won’t get data for it, only for visible ones.
 
+## Why the number of achievements found in the app may not match Steam’s counter
+
+In some cases, Steam’s total achievement counter may not display the exact number of achievements that can be found through the Steam Web API. Because of this, the number shown in Steam may differ from the total number found by the application.
+
+The app counts achievements based on the data returned by the official Steam Web API, so the number displayed in the application is usually the more accurate one for the visible data it was able to process.
+
+This mismatch may also happen because Steam’s counter can include achievements from hidden games, while the app can only load achievements from games that are visible and available through the API.
+
 
 ---
 
@@ -58,9 +66,6 @@ To fetch any user data, we need to query Valve’s databases. That’s exactly w
 1. Open repository **[Releases](../../releases)**.
 2. Download `SteamAchievementInspector-<version>-win-x64.zip`.
 3. Unzip and run `SteamAchievementInspector.exe`.
-
-
----
 
 ## Windows Defender warning
 
@@ -132,6 +137,15 @@ If this tool helped, great! You can also audit your own profile — and if you e
 - Профиль пользователя **полностью скрыт** — в таком случае вы не увидите ничего.
 - Скрыта **конкретная игра** — по ней данные не загрузятся, будут только по открытым играм.
 
+## Почему количество найденных достижений в приложении может не совпадать со счетчиком Steam
+
+В некоторых ситуациях общий счетчик достижений Steam может отображать не совсем точное количество достижений, доступных через Steam Web API. Из-за этого число в Steam может отличаться от общего количества достижений, найденных приложением.
+
+Приложение считает достижения на основе данных, которые возвращает официальный Steam Web API, поэтому число внутри приложения обычно является более точным для тех открытых данных, которые удалось получить и обработать.
+
+Также несовпадение может быть связано с тем, что счетчик Steam может учитывать достижения из скрытых игр, а приложение может загрузить только те игры и достижения, которые доступны через API.
+
+
 ---
 
 ## Установка и запуск
@@ -139,8 +153,6 @@ If this tool helped, great! You can also audit your own profile — and if you e
 1. Откройте вкладку **[Releases](../../releases)** этого репозитория.
 2. Скачайте архив `SteamAchievementInspector-<версия>-win-x64.zip`.
 3. Распакуйте и запустите `SteamAchievementInspector.exe`.
-
----
 
 ## Предупреждение Windows Defender
 
