@@ -1,6 +1,6 @@
 import re
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import requests
 
@@ -22,6 +22,12 @@ class SteamServiceUnavailableError(RuntimeError):
     ...
 
 
+class SteamRateLimitError(RuntimeError):
+    def __init__(self, retry_after: Optional[str] = None):
+        self.retry_after = retry_after
+        super().__init__("Steam API rate limit reached")
+
+
 class SteamAPI:
     def __init__(self, api_key: str, timeout: int = 25):
         self.api_key = api_key
@@ -38,6 +44,8 @@ class SteamAPI:
                 response = self.session.get(url, params=params, timeout=self.timeout)
                 if response.status_code == 200:
                     return response.json()
+                if response.status_code == 429:
+                    raise SteamRateLimitError(response.headers.get("Retry-After"))
                 if response.status_code in (401, 403):
                     raise InvalidAPIKeyError(f"HTTP {response.status_code}")
                 last_response = response

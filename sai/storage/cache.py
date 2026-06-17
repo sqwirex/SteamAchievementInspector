@@ -99,10 +99,6 @@ def read_schema(appid: int, max_age_days: int = SCHEMA_MAX_AGE_DAYS) -> Optional
     return None
 
 
-def is_schema_fresh(appid: int, max_age_days: int = SCHEMA_MAX_AGE_DAYS) -> bool:
-    path = schema_cache_path(appid, create=False)
-    return os.path.isfile(path) and _is_fresh(path, max_age_days)
-
 
 def read_schema_any(appid: int) -> Optional[Dict[str, Dict[str, str]]]:
     return read_schema(appid, max_age_days=0)

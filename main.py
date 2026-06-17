@@ -2,7 +2,7 @@ import sys
 
 from PyQt6 import QtWidgets
 
-from sai.ui.main_window import MainWindow
+from sai.ui.main_window.window import MainWindow
 
 
 def main() -> int:

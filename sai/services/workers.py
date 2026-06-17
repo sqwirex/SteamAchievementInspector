@@ -6,13 +6,20 @@ from PyQt6 import QtCore
 from sai.core.i18n import I18n
 from sai.core.models import Achievement
 from sai.storage.cache import read_schema, read_schema_any, write_schema
-from sai.services.steam_api import InvalidAPIKeyError, NetworkConnectionError, SteamAPI, SteamServiceUnavailableError
+from sai.services.steam_api import InvalidAPIKeyError, NetworkConnectionError, SteamAPI, SteamRateLimitError, SteamServiceUnavailableError
 
 
 UNKNOWN_ERROR_PREFIX = "__SAI_UNHANDLED_ERROR__\n"
 SCHEMA_STALE_REFRESH_LIMIT = 50
 _schema_refresh_lock = threading.Lock()
 _schema_stale_refreshes = 0
+
+
+def _rate_limit_message(i18n: I18n, exc: SteamRateLimitError) -> str:
+    retry_after = str(getattr(exc, "retry_after", "") or "").strip()
+    if retry_after and retry_after.isdigit():
+        return i18n.fmt("api_rate_limited_retry", retry_after=retry_after)
+    return i18n.t("api_rate_limited")
 
 
 def _reserve_stale_schema_refresh() -> bool:
@@ -46,6 +53,9 @@ class ListGamesWorker(QtCore.QRunnable):
             self.signals.loading_games.emit()
             games = api.get_owned_games(steamid64)
             self.signals.finished.emit(steamid64, games)
+        except SteamRateLimitError as e:
+            i18n = I18n(self.lang)
+            self.signals.error.emit(_rate_limit_message(i18n, e))
         except InvalidAPIKeyError:
             i18n = I18n(self.lang)
             self.signals.error.emit(i18n.t("api_invalid"))
@@ -103,7 +113,7 @@ class GameFetchWorker(QtCore.QRunnable):
                         try:
                             schema = api.get_schema_for_game(appid)
                             write_schema(appid, schema)
-                        except (InvalidAPIKeyError, SteamServiceUnavailableError):
+                        except (InvalidAPIKeyError, SteamRateLimitError, SteamServiceUnavailableError):
                             raise
                         except NetworkConnectionError:
                             raise
@@ -127,6 +137,9 @@ class GameFetchWorker(QtCore.QRunnable):
                         )
                     )
                 self.signals.partial.emit(achs)
+        except SteamRateLimitError as e:
+            i18n = I18n(self.lang)
+            self.signals.error.emit(_rate_limit_message(i18n, e))
         except (InvalidAPIKeyError, SteamServiceUnavailableError):
             self.signals.skipped_game.emit(str(self.game.get("name") or self.game.get("appid") or "Unknown"))
         except NetworkConnectionError:
